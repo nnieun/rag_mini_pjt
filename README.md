@@ -510,5 +510,4 @@ RAG_MAX_RETRIES=3
 
 ## 18. 시행착오 목록 
 
-- [TRIALS_AND_ERRORS.md](/home/aiuser/rag_mini_pjt_template/docs/TRIALS_AND_ERRORS.md)
-
+- [TRIALS_AND_ERRORS.md](docs/TRIALS_AND_ERRORS.md)
