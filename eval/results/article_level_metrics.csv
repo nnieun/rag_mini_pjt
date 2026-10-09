@@ -1,0 +1,4 @@
+﻿method,Hit@1,Hit@3,Hit@5,Recall@5,MRR,questions
+Dense,0.8,1.0,1.0,1.0,0.9,5
+Hybrid,0.8,1.0,1.0,1.0,0.9,5
+Hybrid+Reranking,1.0,1.0,1.0,1.0,1.0,5
