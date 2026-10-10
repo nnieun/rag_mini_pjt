@@ -1,0 +1,99 @@
+%%{init: {"theme": "neutral", "er": {"layoutDirection": "LR"}}}%%
+erDiagram
+    USERS ||--o{ CHAT_SESSIONS : owns
+    CHAT_SESSIONS ||--|{ MESSAGES : contains
+    MESSAGES ||--o| RAG_RUNS : triggers
+    RAG_RUNS ||--o{ RETRIEVAL_RESULTS : produces
+    MESSAGES ||--o{ ANSWER_SOURCES : cites
+    RETRIEVAL_RESULTS ||--o| ANSWER_SOURCES : referenced_by
+    RAG_RUNS ||--o{ ANSWER_EVALUATIONS : evaluated_by
+    MESSAGES ||--o{ ANSWER_FEEDBACK : receives
+    LAW_DOCUMENTS ||--|{ LAW_VERSIONS : has
+    LAW_VERSIONS ||--o{ INGESTION_RUNS : indexed_by
+    LAW_VERSIONS ||--o{ RAG_RUNS : searched_by
+
+    USERS {
+        uuid id PK
+        varchar email UK
+        varchar display_name
+        varchar status
+        timestamptz created_at
+    }
+    CHAT_SESSIONS {
+        uuid id PK
+        uuid user_id FK
+        varchar anonymous_key UK
+        varchar title
+        timestamptz updated_at
+    }
+    MESSAGES {
+        uuid id PK
+        uuid session_id FK
+        uuid reply_to_id FK
+        varchar role
+        text content
+        varchar status
+    }
+    RAG_RUNS {
+        uuid id PK
+        uuid user_message_id FK
+        uuid assistant_message_id FK
+        uuid law_version_id FK
+        varchar method
+        boolean abstained
+        int elapsed_ms
+    }
+    RETRIEVAL_RESULTS {
+        uuid id PK
+        uuid rag_run_id FK
+        uuid qdrant_point_id
+        int rank
+        varchar article
+        float rrf_score
+        jsonb payload_snapshot
+    }
+    ANSWER_SOURCES {
+        uuid id PK
+        uuid assistant_message_id FK
+        uuid retrieval_result_id FK
+        varchar source_label
+        text content_snapshot
+    }
+    ANSWER_EVALUATIONS {
+        uuid id PK
+        uuid rag_run_id FK
+        varchar evaluator_type
+        smallint correctness
+        smallint relevance
+        smallint faithfulness
+        boolean hallucination
+    }
+    ANSWER_FEEDBACK {
+        uuid id PK
+        uuid message_id FK
+        uuid user_id FK
+        smallint rating
+        text comment
+    }
+    LAW_DOCUMENTS {
+        uuid id PK
+        varchar law_id UK
+        varchar mst
+        varchar name
+        varchar department
+    }
+    LAW_VERSIONS {
+        uuid id PK
+        uuid law_document_id FK
+        date effective_date
+        varchar promulgation_number
+        varchar source_checksum UK
+    }
+    INGESTION_RUNS {
+        uuid id PK
+        uuid law_version_id FK
+        varchar collection_name
+        varchar embedding_model
+        int total_chunks
+        varchar status
+    }
