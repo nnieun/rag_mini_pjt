@@ -1,0 +1,10 @@
+{
+  "description": "Efficiently research legal regulations by asking questions and receiving answers alongside relevant citations and full context, tailored for AI service professionals.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
