@@ -58,41 +58,20 @@ Retrieval 및 Answer 평가
 
 ```text
 rag_mini_pjt_template/
-├── app/
-│   └── main.py
-├── common/
-│   ├── ai_model.py
-│   ├── config.py
-│   └── qdrant.py
-├── data/ai_basic_law/
-│   ├── ai_basic_law.xml
-│   └── law_search_result.xml
-├── eval/
-│   ├── EVALUATION_GUIDE.md
-│   ├── golden_set_v2.jsonl
-│   ├── evaluate_quality.py
-│   ├── answer_evaluation.csv
-│   └── results/
-├── rag/
-│   ├── loader.py
-│   ├── chunker.py
-│   ├── vectorstore.py
-│   ├── retriever.py
-│   ├── reranker.py
-│   └── pipeline.py
-├── scripts/
-│   └── index_law.py
-├── tests/
-│   ├── test_loader_chunker.py
-│   ├── test_retriever.py
-│   ├── test_pipeline.py
-│   └── test_api.py
-├── notebook/
-│   ├── law_api_fetch.ipynb
-│   ├── qdrant_test_adaptive_hierarchy_anchor.ipynb
-│   └── ai_basic_law_rag_evaluation_1.ipynb
-├── split.py
-├── pyproject.toml
+├── backend/
+│   ├── app/
+│   ├── common/
+│   ├── data/ai_basic_law/
+│   ├── eval/
+│   ├── rag/
+│   ├── scripts/
+│   ├── tests/
+│   ├── notebook/
+│   ├── docker/
+│   ├── pyproject.toml
+│   └── uv.lock
+├── frontend/
+├── docs/
 └── README.md
 ```
 
@@ -103,14 +82,14 @@ rag_mini_pjt_template/
 1. `lawSearch`로 `인공지능` 관련 법령 목록을 검색한다.
 2. 시행일이 `20260721`인 AI 기본법을 선택한다.
 3. 법령 일련번호 `282791`로 법령 본문 XML을 조회한다.
-4. 응답을 `data/ai_basic_law/ai_basic_law.xml`에 저장한다.
+4. 응답을 `backend/data/ai_basic_law/ai_basic_law.xml`에 저장한다.
 
 상세 조회 시 `target=eflaw`와 법령 일련번호를 사용한다. API 응답의 최상위 태그가 `법령`이고 하위에 `기본정보`, `조문`, `부칙`, `제개정이유`가 존재하는지 확인했다.
 
 관련 Notebook:
 
-- `notebook/law_api_fetch.ipynb`
-- `notebook/law_api_xml_loader.ipynb`
+- `backend/notebook/law_api_fetch.ipynb`
+- `backend/notebook/law_api_xml_loader.ipynb`
 
 ## 5. 청킹 전략 비교
 
@@ -145,7 +124,7 @@ XML의 `조문단위`를 그대로 저장하여 54개 문서를 만들었다.
 최종 Notebook:
 
 ```text
-notebook/qdrant_test_adaptive_hierarchy_anchor.ipynb
+backend/notebook/qdrant_test_adaptive_hierarchy_anchor.ipynb
 ```
 
 최종 규칙:
@@ -213,9 +192,10 @@ Filter(
 
 임베딩 API의 요청 제한에 대응하기 위해 20개 단위 배치와 설정 가능한 재시도를 적용했다. 성공한 배치는 유지하고 실패한 현재 배치만 다시 요청한다.
 
-Notebook의 최종 로직은 `rag/` 패키지로 분리했다. XML을 다시 인덱싱할 때는 다음 명령을 사용한다. `--recreate`는 기존 컬렉션을 삭제하므로 재생성이 필요한 경우에만 지정한다.
+Notebook의 최종 로직은 `backend/rag/` 패키지로 분리했다. XML을 다시 인덱싱할 때는 다음 명령을 사용한다. `--recreate`는 기존 컬렉션을 삭제하므로 재생성이 필요한 경우에만 지정한다.
 
 ```bash
+cd backend
 uv run python scripts/index_law.py \
   --collection ai_basic_law_adaptive_anchor_v1 \
   --recreate
@@ -248,7 +228,7 @@ Hybrid 후보를 `Qwen/Qwen3-Reranker-0.6B`로 재정렬한다.
 
 ## 8. Retrieval 평가
 
-Golden Set은 `eval/golden_set_v2.jsonl`이며 총 45문항이다. 정의, 의무, 절차, 복수 근거, 범위 밖 질문을 포함한다.
+Golden Set은 `backend/eval/golden_set_v2.jsonl`이며 총 45문항이다. 정의, 의무, 절차, 복수 근거, 범위 밖 질문을 포함한다.
 
 - `Hit@5`: Top-5에 정답 조문이 하나라도 있는 비율
 - `Recall@5`: 필요한 정답 조문 중 Top-5에서 찾은 비율
@@ -285,12 +265,13 @@ Reranking은 후보 수와 결합 방식을 조정한 후 다시 평가할 수 �
 
 ## 9. 답변 품질 및 Abstention 평가
 
-`eval/evaluate_quality.py`는 다음 두 평가를 한 번에 수행한다.
+`backend/eval/evaluate_quality.py`는 다음 두 평가를 한 번에 수행한다.
 
 - 답변 가능한 q01~q10: 정답성·관련성·근거 충실성 각 0~2점, Hallucination 여부
 - v2 범위 밖 q41~q45: 올바르게 답변을 거절했는지 측정하는 Abstention Accuracy
 
 ```bash
+cd backend
 uv run python eval/evaluate_quality.py --answer-count 10
 ```
 
@@ -308,18 +289,41 @@ uv run python eval/evaluate_quality.py --answer-count 10
 
 결과 파일:
 
-- `eval/results/answer_quality_20261011_015008.csv`
-- `eval/results/abstention_20261011_015008.csv`
-- `eval/results/quality_summary_20261011_015008.json`
+- `backend/eval/results/answer_quality_20261011_015008.csv`
+- `backend/eval/results/abstention_20261011_015008.csv`
+- `backend/eval/results/quality_summary_20261011_015008.json`
 
 위 답변 평가는 LLM Judge의 자동 점수다. CSV에는 답변, 검색 조문, 전체 근거와 채점 사유가 포함되며 최종 보고 전 사람이 원문과 대조해 확인해야 한다.
 
 ## 10. 실행과 테스트
 
-API 실행:
+백엔드 실행:
 
 ```bash
+cd backend
 uv run uvicorn app.main:app --reload
+```
+
+다른 터미널에서 프론트엔드 실행:
+
+```bash
+cd frontend
+pnpm install
+pnpm dev
+```
+
+브라우저에서 `http://localhost:8443`에 접속한다. 개발 환경에서 프론트엔드는 `/api/ask`를 호출하고 Vite가 이를 `http://127.0.0.1:8000/ask`로 전달한다.
+
+배포 환경에서 API 주소가 다르면 `frontend/.env`에 다음 값을 설정한다.
+
+```dotenv
+VITE_API_BASE_URL=https://api.example.com
+```
+
+이 경우 `backend/.env`의 `FRONTEND_ORIGINS`에도 실제 프론트엔드 Origin을 추가해야 한다.
+
+```dotenv
+FRONTEND_ORIGINS=https://example.com
 ```
 
 ```bash
@@ -331,6 +335,7 @@ curl -X POST http://127.0.0.1:8000/ask \
 테스트 실행:
 
 ```bash
+cd backend
 uv run python -m unittest discover -s tests -v
 ```
 
@@ -373,16 +378,17 @@ Hallucination은 `있음/없음`으로 별도 기록한다.
 |---|---|---:|---:|---:|---|
 | 고영향 인공지능이란 무엇인가요? | Hybrid | 2 | 2 | 2 | 없음 |
 
-결과는 `eval/answer_evaluation.csv`에 저장한다. 현재 1문항만 수동 평가했으므로 Answer 품질을 확정하려면 평가 범위를 확대해야 한다.
+결과는 `backend/eval/answer_evaluation.csv`에 저장한다. 현재 1문항만 수동 평가했으므로 Answer 품질을 확정하려면 평가 범위를 확대해야 한다.
 
 ## 14. 환경 설정
 
 ```bash
+cd backend
 uv sync
 uv run jupyter lab
 ```
 
-프로젝트 루트 `.env`:
+`backend/.env`:
 
 ```dotenv
 LAW_API_OC=발급받은_OC
@@ -393,15 +399,25 @@ LLM_MODEL=gpt-5.4-mini
 EMBEDDING_MODEL=text-embedding-3-small
 
 QDRANT_URL=http://localhost:6333
+DATABASE_URL=postgresql://aiuser:local_dev_password@localhost:5432/ai_basic_law
 ```
 
 OpenAI를 직접 사용하면 `OPENAI_API_KEY`를 사용할 수도 있다. `.env`는 Git에 커밋하지 않는다.
 
+Qdrant와 PostgreSQL 실행:
+
+```bash
+cd backend/docker
+docker compose up -d
+```
+
+Qdrant가 이미 실행 중이면 `docker compose up -d postgres`로 PostgreSQL만 추가한다. 기존 `qdrant_storage` 볼륨은 유지된다. 초기 PostgreSQL 스키마는 `backend/docker/postgres-init/001_schema.sql`에서 최초 볼륨 생성 시 적용된다.
+
 ## 15. 실행 순서
 
-1. 법령 XML 수집: `notebook/law_api_fetch.ipynb`
-2. 최종 청킹 및 저장: `notebook/qdrant_test_adaptive_hierarchy_anchor.ipynb`
-3. Retrieval/Answer 평가: `notebook/ai_basic_law_rag_evaluation_1.ipynb`
+1. 법령 XML 수집: `backend/notebook/law_api_fetch.ipynb`
+2. 최종 청킹 및 저장: `backend/notebook/qdrant_test_adaptive_hierarchy_anchor.ipynb`
+3. Retrieval/Answer 평가: `backend/notebook/ai_basic_law_rag_evaluation_1.ipynb`
 
 평가 Notebook은 다음을 수행한다.
 
@@ -415,6 +431,7 @@ OpenAI를 직접 사용하면 `OPENAI_API_KEY`를 사용할 수도 있다. `.env
 ### FastAPI 실행
 
 ```bash
+cd backend
 uv run uvicorn app.main:app --reload
 ```
 
@@ -427,7 +444,7 @@ uv run uvicorn app.main:app --reload
 구현 파일:
 
 ```text
-app/main.py
+backend/app/main.py
 ```
 
 45문항 Retrieval 평가에서 Hit@5와 Recall@5가 가장 높았던 **Hybrid(C)**를 API의 기본 검색 방법으로 사용한다. API에는 Qwen Reranking을 적용하지 않았다.
@@ -580,7 +597,7 @@ RAG_MAX_RETRIES=3
 
 ## 19. 다음 작업
 
-- Notebook 코드를 `rag/loader.py`, `chunker.py`, `vectorstore.py`, `retriever.py`, `reranker.py`, `pipeline.py`로 모듈화
+- Notebook 코드를 `backend/rag/loader.py`, `chunker.py`, `vectorstore.py`, `retriever.py`, `reranker.py`, `pipeline.py`로 모듈화
 - 범위 밖 질문의 Abstention Accuracy 추가
 - 전체 Golden Set Answer 평가
 - MRR 향상을 유지하면서 Hit@5 하락을 줄이는 Reranking 개선
