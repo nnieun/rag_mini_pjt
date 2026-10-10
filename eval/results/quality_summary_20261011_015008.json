@@ -1,0 +1,12 @@
+{
+  "judge": "LLM Judge (human review required)",
+  "answer_question_count": 10,
+  "average_correctness": 2.0,
+  "average_relevance": 2.0,
+  "average_faithfulness": 2.0,
+  "hallucination_rate": 0.0,
+  "abstention_question_count": 5,
+  "abstention_accuracy": 1.0,
+  "answer_csv": "/home/aiuser/rag_mini_pjt_template/eval/results/answer_quality_20261011_015008.csv",
+  "abstention_csv": "/home/aiuser/rag_mini_pjt_template/eval/results/abstention_20261011_015008.csv"
+}
