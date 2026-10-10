@@ -3,17 +3,21 @@ import asyncio
 import csv
 import json
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from common.ai_model import get_llm_model
 from rag.pipeline import RAGPipeline, is_abstention
 from rag.retry import retry_rate_limit
 
 
-ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GOLDEN_SET = ROOT / "eval" / "golden_set_v2.jsonl"
 DEFAULT_RESULT_DIR = ROOT / "eval" / "results"
 

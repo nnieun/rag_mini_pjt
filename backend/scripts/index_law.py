@@ -1,6 +1,11 @@
 import argparse
 import asyncio
 from pathlib import Path
+import sys
+
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
 
 from common.ai_model import get_embedding_model
 from common.qdrant import get_qdrant_client

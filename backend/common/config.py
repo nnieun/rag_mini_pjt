@@ -22,3 +22,8 @@ QDRANT_URL = os.getenv(
     "QDRANT_URL",
     "http://localhost:6333"
 )
+
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://aiuser:local_dev_password@localhost:5432/ai_basic_law",
+)
