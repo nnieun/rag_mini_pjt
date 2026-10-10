@@ -48,9 +48,11 @@ Retrieval 및 Answer 평가
 | Hybrid Retrieval | 완료 | Dense + BM25 + RRF |
 | Reranking | 완료 | Qwen3-Reranker-0.6B |
 | Retrieval 평가 | 완료 | Golden Set 45문항 비교 |
-| 근거 기반 답변 | Notebook 검증 완료 | 답변과 `[S1]` 출처 생성 |
-| Answer 수동 평가 | 일부 완료 | 1문항 평가 완료 |
+| 근거 기반 답변 | 모듈화 및 API 검증 완료 | 답변과 `[S1]` 출처 생성 |
+| Answer 품질 평가 | 완료 | 10문항 LLM Judge + 사람 검토용 CSV |
+| Abstention 평가 | 완료 | 범위 밖 5문항 Accuracy 100% |
 | FastAPI `POST /ask` | 완료 | Hybrid 검색 + 답변 + 출처 반환 |
+| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API 13개 통과 |
 
 ## 3. 프로젝트 구조
 
@@ -68,8 +70,23 @@ rag_mini_pjt_template/
 ├── eval/
 │   ├── EVALUATION_GUIDE.md
 │   ├── golden_set_v2.jsonl
+│   ├── evaluate_quality.py
 │   ├── answer_evaluation.csv
 │   └── results/
+├── rag/
+│   ├── loader.py
+│   ├── chunker.py
+│   ├── vectorstore.py
+│   ├── retriever.py
+│   ├── reranker.py
+│   └── pipeline.py
+├── scripts/
+│   └── index_law.py
+├── tests/
+│   ├── test_loader_chunker.py
+│   ├── test_retriever.py
+│   ├── test_pipeline.py
+│   └── test_api.py
 ├── notebook/
 │   ├── law_api_fetch.ipynb
 │   ├── qdrant_test_adaptive_hierarchy_anchor.ipynb
@@ -194,7 +211,15 @@ Filter(
 )
 ```
 
-임베딩 API의 요청 제한에 대응하기 위해 20개 단위 배치와 65초 무한 재시도를 적용했다. 성공한 배치는 유지하고 실패한 현재 배치만 다시 요청한다.
+임베딩 API의 요청 제한에 대응하기 위해 20개 단위 배치와 설정 가능한 재시도를 적용했다. 성공한 배치는 유지하고 실패한 현재 배치만 다시 요청한다.
+
+Notebook의 최종 로직은 `rag/` 패키지로 분리했다. XML을 다시 인덱싱할 때는 다음 명령을 사용한다. `--recreate`는 기존 컬렉션을 삭제하므로 재생성이 필요한 경우에만 지정한다.
+
+```bash
+uv run python scripts/index_law.py \
+  --collection ai_basic_law_adaptive_anchor_v1 \
+  --recreate
+```
 
 ## 7. Retrieval 방법
 
@@ -258,7 +283,60 @@ Golden Set은 `eval/golden_set_v2.jsonl`이며 총 45문항이다. 정의, 의�
 
 Reranking은 후보 수와 결합 방식을 조정한 후 다시 평가할 수 있다.
 
-## 9. 범위 밖 질문
+## 9. 답변 품질 및 Abstention 평가
+
+`eval/evaluate_quality.py`는 다음 두 평가를 한 번에 수행한다.
+
+- 답변 가능한 q01~q10: 정답성·관련성·근거 충실성 각 0~2점, Hallucination 여부
+- v2 범위 밖 q41~q45: 올바르게 답변을 거절했는지 측정하는 Abstention Accuracy
+
+```bash
+uv run python eval/evaluate_quality.py --answer-count 10
+```
+
+2026-10-11 실행 결과:
+
+| 지표 | 결과 |
+|---|---:|
+| 평가 답변 수 | 10 |
+| 평균 정답성 | 2.0 / 2.0 |
+| 평균 관련성 | 2.0 / 2.0 |
+| 평균 근거 충실성 | 2.0 / 2.0 |
+| Hallucination Rate | 0% |
+| 범위 밖 질문 수 | 5 |
+| Abstention Accuracy | 100% (5/5) |
+
+결과 파일:
+
+- `eval/results/answer_quality_20261011_015008.csv`
+- `eval/results/abstention_20261011_015008.csv`
+- `eval/results/quality_summary_20261011_015008.json`
+
+위 답변 평가는 LLM Judge의 자동 점수다. CSV에는 답변, 검색 조문, 전체 근거와 채점 사유가 포함되며 최종 보고 전 사람이 원문과 대조해 확인해야 한다.
+
+## 10. 실행과 테스트
+
+API 실행:
+
+```bash
+uv run uvicorn app.main:app --reload
+```
+
+```bash
+curl -X POST http://127.0.0.1:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"고영향 인공지능이란 무엇인가요?"}'
+```
+
+테스트 실행:
+
+```bash
+uv run python -m unittest discover -s tests -v
+```
+
+현재 13개 테스트가 XML 로딩, 최종 청크 수와 Anchor, 장·절 독립 청크 방지, BM25/RRF/Hybrid 검색, 임베딩 캐시, 부모 확장, 출처 답변, Abstention 판정 및 API 스키마를 확인한다. 실제 Qdrant와 LLM을 연결한 `/health`, `/ask` 통합 테스트도 완료했다.
+
+## 11. 범위 밖 질문
 
 q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 
@@ -270,7 +348,7 @@ q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 
 이 문항은 관련 조문 Hit보다 시스템이 근거 부족을 인식하고 답변을 거절하는지를 평가해야 한다. 향후 Retrieval 평가와 별도로 `Abstention Accuracy`를 추가한다.
 
-## 10. 근거 기반 답변
+## 12. 근거 기반 답변
 
 검색 결과의 `parent_id`로 전체 조문을 가져와 LLM Context를 구성한다.
 
@@ -279,7 +357,7 @@ q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 - 근거가 부족하면 확인할 수 없다고 답한다.
 - 법률 내용이나 조문을 추측하지 않는다.
 
-## 11. Answer 평가
+## 13. Answer 평가
 
 | 기준 | 0점 | 1점 | 2점 |
 |---|---|---|---|
@@ -297,7 +375,7 @@ Hallucination은 `있음/없음`으로 별도 기록한다.
 
 결과는 `eval/answer_evaluation.csv`에 저장한다. 현재 1문항만 수동 평가했으므로 Answer 품질을 확정하려면 평가 범위를 확대해야 한다.
 
-## 12. 환경 설정
+## 14. 환경 설정
 
 ```bash
 uv sync
@@ -319,7 +397,7 @@ QDRANT_URL=http://localhost:6333
 
 OpenAI를 직접 사용하면 `OPENAI_API_KEY`를 사용할 수도 있다. `.env`는 Git에 커밋하지 않는다.
 
-## 13. 실행 순서
+## 15. 실행 순서
 
 1. 법령 XML 수집: `notebook/law_api_fetch.ipynb`
 2. 최종 청킹 및 저장: `notebook/qdrant_test_adaptive_hierarchy_anchor.ipynb`
@@ -344,7 +422,7 @@ uv run uvicorn app.main:app --reload
 - 상태 확인: `GET http://127.0.0.1:8000/health`
 - 질문: `POST http://127.0.0.1:8000/ask`
 
-## 14. FastAPI QA API
+## 16. FastAPI QA API
 
 구현 파일:
 
@@ -476,7 +554,7 @@ RAG_MAX_RETRIES=3
 | 정의 근거 | 제2조 |
 | 답변 출처 표시 | `[S1]`, `[S2]` 형식 |
 
-## 15. 실험 Notebook 비교
+## 17. 실험 Notebook 비교
 
 | Notebook | 목적 |
 |---|---|
@@ -489,7 +567,7 @@ RAG_MAX_RETRIES=3
 | `ai_basic_law_hybrid_rerank.ipynb` | Hybrid/Reranking 초기 실험 |
 | `ai_basic_law_rag_evaluation_1.ipynb` | 최종 Retrieval/Answer 평가 |
 
-## 16. 결론
+## 18. 결론
 
 1. 법률 문서는 글자 수보다 조·항·호·목 구조를 우선해야 한다.
 2. 모든 계층을 벡터화하면 검색 결과 중복이 증가한다.
@@ -500,7 +578,7 @@ RAG_MAX_RETRIES=3
 7. 현재 최종 Retrieval 선택은 Hybrid(C)다.
 8. 검색 성능과 별개로 Answer의 근거 충실성과 Hallucination을 평가해야 한다.
 
-## 17. 다음 작업
+## 19. 다음 작업
 
 - Notebook 코드를 `rag/loader.py`, `chunker.py`, `vectorstore.py`, `retriever.py`, `reranker.py`, `pipeline.py`로 모듈화
 - 범위 밖 질문의 Abstention Accuracy 추가
@@ -508,6 +586,6 @@ RAG_MAX_RETRIES=3
 - MRR 향상을 유지하면서 Hit@5 하락을 줄이는 Reranking 개선
 - 응답에 조·항·호·목 및 법령 원문 링크 포함
 
-## 18. 시행착오 목록 
+## 20. 시행착오 목록
 
 - [TRIALS_AND_ERRORS.md](docs/TRIALS_AND_ERRORS.md)
