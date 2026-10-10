@@ -58,10 +58,12 @@ button { border: 0; cursor: pointer; }
 .recent-item span { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
 .recent-item small { color: #9aa3b1; font-size: 10px; }
 .recent-item.selected { background: #fff; box-shadow: 0 1px 3px rgba(25, 45, 72, .06); }
+.recent-empty { margin: 8px 11px; color: #98a2b1; font-size: 10px; }
 .sidebar-status { position: absolute; bottom: 20px; left: 24px; right: 20px; color: #687386; font-size: 10px; line-height: 1.6; }
 .sidebar-status div { color: #405064; font-weight: 600; }
 .sidebar-status p { margin: 6px 0 0 12px; }
 .status-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #3c9466; margin-right: 7px; }
+.status-dot.status-error { background: #c75b5b; }
 .mobile-sidebar-head { display: none; }
 
 .conversation { grid-column: 2; min-width: 0; padding: 0 0 130px; }
@@ -126,6 +128,12 @@ button { border: 0; cursor: pointer; }
 .answer-content h2 { font-size: 13px; margin: 0 0 10px; color: #24334a; }
 .answer-content > p { margin: 0 0 24px; color: #344054; font-size: 14px; line-height: 1.85; letter-spacing: -.15px; }
 .answer-content strong { color: #172d4a; font-weight: 700; }
+.loading-state { min-height: 150px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #68768a; font-size: 12px; }
+.loading-spinner { width: 18px; height: 18px; border: 2px solid #dbe4ef; border-top-color: #315f97; border-radius: 50%; animation: spin .8s linear infinite; }
+.error-state { padding: 18px; border: 1px solid #efcccc; border-radius: 8px; color: #7e3030; background: #fff7f7; }
+.error-state p { margin: 7px 0 12px; font-size: 12px; line-height: 1.6; }
+.error-state button { padding: 7px 11px; border-radius: 6px; color: #fff; background: #934242; font-size: 10px; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .citation {
   display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; margin-left: 5px; transform: translateY(-1px);
   border: 1px solid #cad8ea; border-radius: 5px; background: #f3f7fc; color: #285a96; font-size: 10px; font-weight: 700;
