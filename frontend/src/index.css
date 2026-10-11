@@ -227,16 +227,6 @@ button { border: 0; cursor: pointer; }
 .evidence-scroll { padding: 15px 15px 30px; overflow-y: auto; }
 .evidence-card { padding: 16px; margin-bottom: 12px; border: 1px solid #dbe2eb; border-radius: 9px; background: #fff; box-shadow: 0 2px 7px rgba(30, 49, 72, .04); transition: border .15s, box-shadow .15s; cursor: pointer; }
 .evidence-card.selected { border-color: #7296c1; box-shadow: 0 0 0 2px #e6eef8, 0 3px 10px rgba(30, 49, 72, .06); }
-.evidence-card.selected blockquote {
-  margin-inline: -3px;
-  padding: 3px 5px;
-  border-left: 3px solid #e2b93b;
-  border-radius: 3px;
-  background: linear-gradient(104deg, rgba(255, 241, 153, .72), rgba(255, 247, 196, .5));
-  box-decoration-break: clone;
-  -webkit-box-decoration-break: clone;
-  transition: background-color .2s ease;
-}
 .evidence-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .source-number { width: 21px; height: 21px; display: grid; place-items: center; border-radius: 5px; background: #244f82; color: #fff; font-size: 9px; font-weight: 700; }
 .used-badge { display: flex; align-items: center; gap: 3px; color: #347253; font-size: 8px; font-weight: 600; }
@@ -244,7 +234,7 @@ button { border: 0; cursor: pointer; }
 .law-path { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; color: #5878a0; font-size: 9px; margin: 7px 0 13px; }
 .evidence-card h3 { font-size: 13px; color: #1d2d44; margin: 0 0 9px; }
 .evidence-card blockquote { margin: 0; color: #3d4b60; font-size: 11px; line-height: 1.85; }
-.evidence-card mark { padding: 1px 2px; color: inherit; background: #e7f0fb; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.evidence-card mark { padding: 1px 2px; color: inherit; background: #fff1a8; border-left: 2px solid #e2b93b; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .full-article-button { width: 100%; display: flex; align-items: center; gap: 7px; padding: 12px 0 0; margin-top: 14px; border-top: 1px solid #ebeff3; color: #315f96; background: transparent; font-size: 10px; font-weight: 600; text-align: left; }
 .full-article-button svg:last-child { margin-left: auto; }
 .more-sources-button { width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; margin: 2px 0 12px; padding: 11px; border: 1px solid #b9cbe0; border-radius: 8px; color: #285787; background: #edf4fb; font-size: 10px; font-weight: 700; }

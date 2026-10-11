@@ -22,15 +22,57 @@ function Citation({ sourceId, active, onClick }: { sourceId: string; active: boo
   return <button className={`citation ${active ? "citation-active" : ""}`} onClick={onClick}><Icon name="file" size={13} />{sourceId}</button>;
 }
 
-function AnswerBody({ text, selected, onCitation }: { text: string; selected: string; onCitation: (id: string) => void }) {
+function AnswerBody({ text, selected, onCitation }: { text: string; selected: string; onCitation: (id: string, claim: string) => void }) {
   return <>{text.split(/\n+/).filter(Boolean).map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(\[S\d+\])/g).map((part, partIndex) => {
     const match = part.match(/^\[(S\d+)\]$/);
-    return match ? <Citation key={`${part}-${partIndex}`} sourceId={match[1]} active={selected === match[1]} onClick={() => onCitation(match[1])} /> : <span key={partIndex}>{part}</span>;
+    const claim = paragraph.replace(/\[S\d+\]/g, "").trim();
+    return match ? <Citation key={`${part}-${partIndex}`} sourceId={match[1]} active={selected === match[1]} onClick={() => onCitation(match[1], claim)} /> : <span key={partIndex}>{part}</span>;
   })}</p>)}</>;
 }
 
 function sourceLocation(source: LawSource) {
   return [source.article, source.paragraph, source.item, source.subitem, source.title].filter(Boolean).join(" · ");
+}
+
+function koreanTokens(text: string) {
+  return Array.from(new Set((text.toLowerCase().match(/[가-힣a-z0-9]+/g) ?? []).filter((token) => token.length >= 2)));
+}
+
+function bestEvidenceSpan(content: string, claim: string, fallback: string) {
+  if (!claim.trim()) return "";
+  const starts = [0];
+  const marker = /[①-⑳]|(?:^|\s)(?:\d+|[가-하])\.\s/g;
+  for (const match of content.matchAll(marker)) {
+    const offset = match[0].search(/\S/);
+    const start = (match.index ?? 0) + Math.max(offset, 0);
+    if (start > 0 && !starts.includes(start)) starts.push(start);
+  }
+  const segments = starts.map((start, index) => ({
+    start,
+    text: content.slice(start, starts[index + 1] ?? content.length).trim(),
+  })).filter((segment) => segment.text.length > 0);
+  const claimTokens = koreanTokens(claim);
+  let best = { text: fallback.trim(), score: 0 };
+  for (const segment of segments) {
+    const segmentTokens = new Set(koreanTokens(segment.text));
+    const overlap = claimTokens.filter((token) => segmentTokens.has(token));
+    const score = overlap.reduce((sum, token) => sum + token.length, 0);
+    if (score > best.score) best = { text: segment.text, score };
+  }
+  return best.score > 0 ? best.text : fallback.trim();
+}
+
+function HighlightedSource({ source, expanded, active, claim }: { source: LawSource; expanded: boolean; active: boolean; claim: string }) {
+  const visibleContent = expanded
+    ? source.content
+    : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`;
+  const highlight = bestEvidenceSpan(source.content, claim, source.highlight_text ?? "");
+  if (!active || !highlight) return <>{visibleContent}</>;
+
+  const start = visibleContent.indexOf(highlight);
+  if (start < 0) return <>{visibleContent}</>;
+  const end = start + highlight.length;
+  return <>{visibleContent.slice(0, start)}<mark>{visibleContent.slice(start, end)}</mark>{visibleContent.slice(end)}</>;
 }
 
 const exampleQuestions = ["고영향 인공지능이란 무엇인가요?", "인공지능사업자의 의무 관련 조문을 정리해줘", "투명성 관련 조문을 찾아줘"];
@@ -56,6 +98,7 @@ export default function App() {
   const [resultCache, setResultCache] = useState<Record<string, AskResponse>>({});
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
   const [selectedCitation, setSelectedCitation] = useState("");
+  const [selectedClaim, setSelectedClaim] = useState("");
   const [articleOpen, setArticleOpen] = useState("");
   const [processOpen, setProcessOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(true);
@@ -99,7 +142,7 @@ export default function App() {
       setConversationRoot(normalized);
     }
 
-    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setError(""); setEvidenceOpen(true); setShowAllSources(false); setMobileNavOpen(false);
+    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setError(""); setEvidenceOpen(true); setShowAllSources(false); setMobileNavOpen(false); setSelectedClaim("");
     if (cachedResult) {
       setResult(cachedResult);
       setSelectedCitation(cachedResult.sources[0]?.source_id ?? "");
@@ -129,12 +172,14 @@ export default function App() {
   };
 
   const submitQuestion = (event: FormEvent) => { event.preventDefault(); void runQuestion(question, false, screen === "answer"); };
-  const selectCitation = (sourceId: string) => {
+  const selectCitation = (sourceId: string, claim: string) => {
     const sourceIndex = result?.sources.findIndex(
       (source) => source.source_id === sourceId,
     ) ?? -1;
     if (sourceIndex >= initialSourceCount) setShowAllSources(true);
     setSelectedCitation(sourceId);
+    setSelectedClaim(claim);
+    setArticleOpen(sourceId);
     setEvidenceOpen(true);
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -144,7 +189,7 @@ export default function App() {
       });
     });
   };
-  const startNewQuestion = () => { viewVersion.current += 1; setScreen("empty"); setQuestion(""); setSubmittedQuestion(""); setConversationRoot(""); setResult(null); setPreviousTurns([]); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); setShowAllSources(false); };
+  const startNewQuestion = () => { viewVersion.current += 1; setScreen("empty"); setQuestion(""); setSubmittedQuestion(""); setConversationRoot(""); setResult(null); setPreviousTurns([]); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); setShowAllSources(false); setSelectedClaim(""); };
   const openCompletedAnswer = () => {
     if (!completionNotification) return;
     viewVersion.current += 1;
@@ -225,7 +270,7 @@ export default function App() {
         {screen === "answer" && <form className="composer-wrap" onSubmit={submitQuestion}><div className="composer"><input aria-label="후속 질문" disabled={loading} onChange={(event) => setQuestion(event.target.value)} placeholder="후속 질문을 입력하세요" value={question} /><button aria-label="질문 보내기" className="send-button" disabled={loading} type="submit"><Icon name="send" size={17} /></button><span>AI 기본법 본문에서 근거를 찾아 답합니다</span></div></form>}
       </section>
       {screen === "answer" && result && result.sources.length > 0 && !evidenceOpen && <button className="evidence-restore" onClick={() => setEvidenceOpen(true)}><Icon name="file" size={17} />근거 조문 <span>{result.sources.length}</span></button>}
-      {screen === "answer" && result && result.sources.length > 0 && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>현재 검색에서 관련 근거 {result.total_relevant || result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.total_relevant || result.sources.length}</span></button></div><div className="evidence-scroll">{visibleSources.map((source, index) => <article aria-current={selectedCitation === source.source_id ? "true" : undefined} className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} data-source-id={source.source_id} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}{remainingSourceCount > 0 && <button className="more-sources-button" onClick={() => setShowAllSources(true)}>나머지 {remainingSourceCount}개 조문 보기 <Icon name="chevron" size={15} /></button>}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
+      {screen === "answer" && result && result.sources.length > 0 && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>현재 검색에서 관련 근거 {result.total_relevant || result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.total_relevant || result.sources.length}</span></button></div><div className="evidence-scroll">{visibleSources.map((source, index) => <article aria-current={selectedCitation === source.source_id ? "true" : undefined} className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} data-source-id={source.source_id} key={source.source_id} onClick={() => { setSelectedCitation(source.source_id); setSelectedClaim(""); }}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote><HighlightedSource source={source} expanded={articleOpen === source.source_id} active={selectedCitation === source.source_id} claim={selectedClaim} /></blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}{remainingSourceCount > 0 && <button className="more-sources-button" onClick={() => setShowAllSources(true)}>나머지 {remainingSourceCount}개 조문 보기 <Icon name="chevron" size={15} /></button>}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
     </div>
     {completionNotification && (
       <div className="completion-toast" role="status">

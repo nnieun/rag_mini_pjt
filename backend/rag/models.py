@@ -42,6 +42,7 @@ class Source:
     subitem: str
     title: str
     content: str
+    highlight_text: str = ""
 
     def as_dict(self) -> dict[str, str]:
         return {
@@ -52,6 +53,7 @@ class Source:
             "subitem": self.subitem,
             "title": self.title,
             "content": self.content,
+            "highlight_text": self.highlight_text,
         }
 
 

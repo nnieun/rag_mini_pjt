@@ -6,6 +6,7 @@ export type LawSource = {
   subitem: string;
   title: string;
   content: string;
+  highlight_text: string;
 };
 
 export type AskResponse = {

@@ -144,7 +144,7 @@ class RAGPipeline:
         self,
         results: list[dict],
     ) -> tuple[str, list[Source]]:
-        selected: list[dict] = []
+        selected: list[tuple[dict, dict]] = []
         seen: set[str] = set()
         for result in results:
             parent_id = result.get("parent_id")
@@ -155,11 +155,11 @@ class RAGPipeline:
             if key in seen:
                 continue
             seen.add(key)
-            selected.append(document)
+            selected.append((document, result))
 
         context_parts: list[str] = []
         sources: list[Source] = []
-        for index, document in enumerate(selected, start=1):
+        for index, (document, matched_chunk) in enumerate(selected, start=1):
             source_id = f"S{index}"
             content = str(document["content"])
             location = " ".join(
@@ -182,6 +182,12 @@ class RAGPipeline:
                     subitem=str(document.get("subitem") or ""),
                     title=str(document.get("title") or ""),
                     content=content,
+                    highlight_text=(
+                        str(matched_chunk.get("content") or "")
+                        if str(matched_chunk.get("content") or "").strip()
+                        != content.strip()
+                        else ""
+                    ),
                 )
             )
         return "\n\n".join(context_parts), sources

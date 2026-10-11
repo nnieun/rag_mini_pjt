@@ -122,6 +122,7 @@ class PipelineTest(unittest.TestCase):
         result = asyncio.run(pipeline.answer("고영향 인공지능이란?"))
         self.assertEqual(result.sources[0].article, "제2조")
         self.assertEqual(result.sources[0].content, "고영향 인공지능의 전체 정의")
+        self.assertEqual(result.sources[0].highlight_text, "고영향 인공지능이란...")
         self.assertIn("[S1]", result.answer)
 
     def test_abstention_detection(self):

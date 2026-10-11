@@ -62,6 +62,7 @@ class ApiTest(unittest.TestCase):
                     item="4호",
                     title="정의",
                     content="테스트 근거",
+                    highlight_text="고영향 인공지능",
                 )
             ],
             method="Hybrid(Dense+BM25+RRF)",
@@ -70,6 +71,7 @@ class ApiTest(unittest.TestCase):
             cache_hit=True,
         )
         self.assertEqual(response.sources[0].article, "제2조")
+        self.assertEqual(response.sources[0].highlight_text, "고영향 인공지능")
         self.assertTrue(response.cache_hit)
 
 

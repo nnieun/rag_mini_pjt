@@ -29,6 +29,7 @@ class SourceResponse(BaseModel):
     subitem: str = ""
     title: str = ""
     content: str
+    highlight_text: str = ""
 
 
 class AskResponse(BaseModel):
@@ -78,7 +79,7 @@ def create_app(
                 collection_name=pipeline.retriever.collection_name,
                 pipeline_version=os.getenv(
                     "RAG_CACHE_VERSION",
-                    "conditional-rerank-v9",
+                    "conditional-rerank-v10",
                 ),
                 ttl_days=int(os.getenv("RAG_CACHE_TTL_DAYS", "30")),
             )
