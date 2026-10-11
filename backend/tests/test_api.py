@@ -43,6 +43,12 @@ class ApiTest(unittest.TestCase):
             AskRequest(question=" ")
         request = AskRequest(question="고영향 인공지능이란?")
         self.assertEqual(request.question, "고영향 인공지능이란?")
+        self.assertFalse(request.refresh)
+        refresh_request = AskRequest(
+            question="고영향 인공지능이란?",
+            refresh=True,
+        )
+        self.assertTrue(refresh_request.refresh)
 
     def test_response_serialization(self):
         response = AskResponse(
@@ -59,8 +65,10 @@ class ApiTest(unittest.TestCase):
             method="Hybrid(Dense+BM25+RRF)",
             retrieved_articles=["제2조"],
             elapsed_ms=10.0,
+            cache_hit=True,
         )
         self.assertEqual(response.sources[0].article, "제2조")
+        self.assertTrue(response.cache_hit)
 
 
 if __name__ == "__main__":

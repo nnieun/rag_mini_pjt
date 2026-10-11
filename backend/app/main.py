@@ -1,5 +1,6 @@
 import time
 import os
+import logging
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -7,11 +8,17 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from common.answer_cache import PostgresAnswerCache
+from common.database import create_database_pool
 from rag.pipeline import RAGPipeline
+
+
+logger = logging.getLogger(__name__)
 
 
 class AskRequest(BaseModel):
     question: str = Field(min_length=2, max_length=1000)
+    refresh: bool = False
 
 
 class SourceResponse(BaseModel):
@@ -30,6 +37,8 @@ class AskResponse(BaseModel):
     method: str
     retrieved_articles: list[str]
     elapsed_ms: float
+    cache_hit: bool = False
+    processing_ms: float = 0.0
 
 
 class HealthResponse(BaseModel):
@@ -49,9 +58,38 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pipeline = pipeline_factory()
+        answer_cache = None
+        cache_enabled = os.getenv(
+            "RAG_ANSWER_CACHE_ENABLED", "true"
+        ).lower() in {"1", "true", "yes", "on"}
+        if cache_enabled:
+            answer_cache = PostgresAnswerCache(
+                create_database_pool(),
+                collection_name=pipeline.retriever.collection_name,
+                pipeline_version=os.getenv(
+                    "RAG_CACHE_VERSION",
+                    "conditional-rerank-v3",
+                ),
+                ttl_days=int(os.getenv("RAG_CACHE_TTL_DAYS", "30")),
+            )
+            try:
+                await answer_cache.open()
+            except Exception as error:
+                logger.warning(
+                    "PostgreSQL 답변 캐시를 사용할 수 없어 캐시 없이 시작합니다: %s",
+                    error,
+                )
+                await answer_cache.close()
+                answer_cache = None
+            else:
+                pipeline.answer_cache = answer_cache
         app.state.pipeline = pipeline
-        yield
-        pipeline.close()
+        try:
+            yield
+        finally:
+            pipeline.close()
+            if answer_cache is not None:
+                await answer_cache.close()
 
     application = FastAPI(
         title="AI 기본법 근거 기반 QA API",
@@ -105,7 +143,10 @@ def create_app(
     ) -> AskResponse:
         started = time.perf_counter()
         try:
-            result = await pipeline.answer(payload.question)
+            result = await pipeline.answer(
+                payload.question,
+                bypass_cache=payload.refresh,
+            )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
         except Exception as error:

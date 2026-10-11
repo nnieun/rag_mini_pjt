@@ -1,11 +1,12 @@
 import os
+import time
 from typing import Any
 
 from common.ai_model import get_embedding_model, get_llm_model
 from common.qdrant import get_qdrant_client
 from rag.models import AnswerResult, Source
 from rag.reranker import QwenReranker
-from rag.retriever import HybridRetriever
+from rag.retriever import HybridRetriever, is_definition_query
 from rag.retry import retry_rate_limit
 
 
@@ -26,12 +27,16 @@ class RAGPipeline:
         retriever: HybridRetriever,
         llm: Any,
         reranker: QwenReranker | None = None,
+        answer_cache: Any | None = None,
+        conditional_reranking: bool = False,
         max_retries: int = 3,
         retry_wait_seconds: int = 65,
     ):
         self.retriever = retriever
         self.llm = llm
         self.reranker = reranker
+        self.answer_cache = answer_cache
+        self.conditional_reranking = conditional_reranking
         self.max_retries = max_retries
         self.retry_wait_seconds = retry_wait_seconds
 
@@ -56,6 +61,10 @@ class RAGPipeline:
         return cls(
             retriever=retriever,
             llm=get_llm_model(max_tokens=1200),
+            conditional_reranking=(
+                os.getenv("RAG_CONDITIONAL_RERANK", "true").lower()
+                in {"1", "true", "yes", "on"}
+            ),
             max_retries=max_retries,
             retry_wait_seconds=wait_seconds,
         )
@@ -67,7 +76,8 @@ class RAGPipeline:
         k: int | None = None,
         use_reranking: bool = False,
     ) -> list[dict]:
-        if use_reranking:
+        should_rerank = self.should_rerank(question, use_reranking)
+        if should_rerank:
             if self.reranker is None:
                 self.reranker = QwenReranker()
             candidates = await self.retriever.search(
@@ -77,9 +87,14 @@ class RAGPipeline:
             return self.reranker.rerank(
                 question,
                 candidates,
-                k=k or self.retriever.top_k,
+                k or self.retriever.top_k,
             )
         return await self.retriever.search(question, k=k)
+
+    def should_rerank(self, question: str, force_reranking: bool = False) -> bool:
+        return force_reranking or (
+            self.conditional_reranking and is_definition_query(question)
+        )
 
     def build_context(
         self,
@@ -132,15 +147,24 @@ class RAGPipeline:
         question: str,
         *,
         use_reranking: bool = False,
+        bypass_cache: bool = False,
     ) -> AnswerResult:
         question = question.strip()
         if len(question) < 2:
             raise ValueError("질문은 두 글자 이상이어야 합니다.")
 
+        if self.answer_cache is not None and not bypass_cache:
+            cached = await self.answer_cache.get(question)
+            if cached is not None:
+                return cached
+
+        processing_started = time.perf_counter()
+
         results = await self.retrieve(
             question,
             use_reranking=use_reranking,
         )
+        reranking_applied = self.should_rerank(question, use_reranking)
         if not results:
             return AnswerResult(
                 answer=ABSTENTION_PHRASE,
@@ -171,16 +195,23 @@ class RAGPipeline:
         answer = response.content
         if not isinstance(answer, str):
             answer = str(answer)
-        return AnswerResult(
+        result = AnswerResult(
             answer=answer,
             sources=sources,
             method=(
                 f"{self.retriever.method}+Reranking"
-                if use_reranking
+                if reranking_applied
                 else self.retriever.method
             ),
             retrieved_articles=self.retriever.unique_articles(results),
+            processing_ms=round(
+                (time.perf_counter() - processing_started) * 1000,
+                2,
+            ),
         )
+        if self.answer_cache is not None:
+            await self.answer_cache.put(question, result)
+        return result
 
     def close(self) -> None:
         self.retriever.query_embedding_cache.clear()

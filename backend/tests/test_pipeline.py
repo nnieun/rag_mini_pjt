@@ -46,6 +46,31 @@ class FakeLLM:
         return SimpleNamespace(content="고영향 인공지능은 ... [S1]")
 
 
+class FakeReranker:
+    def __init__(self):
+        self.calls = 0
+
+    def rerank(self, question, candidates, k=5):
+        self.calls += 1
+        return candidates[:k]
+
+
+class FakeAnswerCache:
+    def __init__(self):
+        self.value = None
+        self.put_calls = 0
+
+    async def get(self, question):
+        if self.value is None:
+            return None
+        self.value.cache_hit = True
+        return self.value
+
+    async def put(self, question, result):
+        self.put_calls += 1
+        self.value = result
+
+
 class PipelineTest(unittest.TestCase):
     def test_parent_expansion_and_answer(self):
         pipeline = RAGPipeline(
@@ -62,6 +87,45 @@ class PipelineTest(unittest.TestCase):
             is_abstention("제공된 AI 기본법 근거에서는 확인할 수 없습니다")
         )
         self.assertFalse(is_abstention("제2조에 따라 적용됩니다."))
+
+    def test_conditional_reranking_only_for_definition_query(self):
+        reranker = FakeReranker()
+        pipeline = RAGPipeline(
+            retriever=FakeRetriever(),
+            llm=FakeLLM(),
+            reranker=reranker,
+            conditional_reranking=True,
+        )
+
+        definition = asyncio.run(pipeline.answer("고영향 인공지능이란 무엇인가요?"))
+        general = asyncio.run(pipeline.answer("표시 의무를 알려주세요"))
+
+        self.assertEqual(reranker.calls, 1)
+        self.assertEqual(
+            definition.method,
+            "Hybrid(Dense+BM25+RRF)+Reranking",
+        )
+        self.assertEqual(general.method, "Hybrid(Dense+BM25+RRF)")
+
+    def test_completed_answer_is_reused_from_cache(self):
+        cache = FakeAnswerCache()
+        pipeline = RAGPipeline(
+            retriever=FakeRetriever(),
+            llm=FakeLLM(),
+            answer_cache=cache,
+        )
+
+        first = asyncio.run(pipeline.answer("고영향 인공지능이란?"))
+        self.assertFalse(first.cache_hit)
+        second = asyncio.run(pipeline.answer("고영향 인공지능이란?"))
+        refreshed = asyncio.run(
+            pipeline.answer("고영향 인공지능이란?", bypass_cache=True)
+        )
+
+        self.assertEqual(cache.put_calls, 2)
+        self.assertTrue(second.cache_hit)
+        self.assertFalse(refreshed.cache_hit)
+        self.assertEqual(first.answer, second.answer)
 
 
 if __name__ == "__main__":

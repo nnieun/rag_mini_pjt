@@ -61,6 +61,8 @@ class AnswerResult:
     sources: list[Source]
     method: str
     retrieved_articles: list[str]
+    cache_hit: bool = False
+    processing_ms: float = 0.0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -68,4 +70,6 @@ class AnswerResult:
             "sources": [source.as_dict() for source in self.sources],
             "method": self.method,
             "retrieved_articles": self.retrieved_articles,
+            "cache_hit": self.cache_hit,
+            "processing_ms": self.processing_ms,
         }
