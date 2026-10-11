@@ -11,6 +11,7 @@ class FakeRetriever:
     candidate_k = 20
 
     def __init__(self):
+        self.last_k = None
         self.chunks_by_key = {
             "parent-2": {
                 "chunk_id": "parent-point",
@@ -27,6 +28,7 @@ class FakeRetriever:
         self.client = SimpleNamespace(close=lambda: None)
 
     async def search(self, question, k=None):
+        self.last_k = k
         return [
             {
                 "chunk_id": "child-2-4",
@@ -49,10 +51,14 @@ class FakeLLM:
 class FakeReranker:
     def __init__(self):
         self.calls = 0
+        self.warmup_calls = 0
 
     def rerank(self, question, candidates, k=5):
         self.calls += 1
         return candidates[:k]
+
+    def warmup(self):
+        self.warmup_calls += 1
 
 
 class FakeAnswerCache:
@@ -95,17 +101,24 @@ class PipelineTest(unittest.TestCase):
             llm=FakeLLM(),
             reranker=reranker,
             conditional_reranking=True,
+            rerank_candidate_k=5,
         )
 
         definition = asyncio.run(pipeline.answer("고영향 인공지능이란 무엇인가요?"))
+        self.assertEqual(pipeline.retriever.last_k, 5)
+
         general = asyncio.run(pipeline.answer("표시 의무를 알려주세요"))
 
         self.assertEqual(reranker.calls, 1)
+        self.assertEqual(pipeline.retriever.last_k, None)
         self.assertEqual(
             definition.method,
             "Hybrid(Dense+BM25+RRF)+Reranking",
         )
         self.assertEqual(general.method, "Hybrid(Dense+BM25+RRF)")
+
+        pipeline.preload_reranker()
+        self.assertEqual(reranker.warmup_calls, 1)
 
     def test_completed_answer_is_reused_from_cache(self):
         cache = FakeAnswerCache()

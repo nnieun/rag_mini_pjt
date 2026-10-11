@@ -29,6 +29,7 @@ class RAGPipeline:
         reranker: QwenReranker | None = None,
         answer_cache: Any | None = None,
         conditional_reranking: bool = False,
+        rerank_candidate_k: int | None = None,
         max_retries: int = 3,
         retry_wait_seconds: int = 65,
     ):
@@ -37,6 +38,9 @@ class RAGPipeline:
         self.reranker = reranker
         self.answer_cache = answer_cache
         self.conditional_reranking = conditional_reranking
+        self.rerank_candidate_k = (
+            rerank_candidate_k or retriever.candidate_k
+        )
         self.max_retries = max_retries
         self.retry_wait_seconds = retry_wait_seconds
 
@@ -61,9 +65,16 @@ class RAGPipeline:
         return cls(
             retriever=retriever,
             llm=get_llm_model(max_tokens=1200),
+            reranker=QwenReranker(
+                max_length=int(os.getenv("RAG_RERANK_MAX_LENGTH", "512")),
+                batch_size=int(os.getenv("RAG_RERANK_BATCH_SIZE", "5")),
+            ),
             conditional_reranking=(
                 os.getenv("RAG_CONDITIONAL_RERANK", "true").lower()
                 in {"1", "true", "yes", "on"}
+            ),
+            rerank_candidate_k=int(
+                os.getenv("RAG_RERANK_CANDIDATE_K", "5")
             ),
             max_retries=max_retries,
             retry_wait_seconds=wait_seconds,
@@ -82,7 +93,7 @@ class RAGPipeline:
                 self.reranker = QwenReranker()
             candidates = await self.retriever.search(
                 question,
-                k=self.retriever.candidate_k,
+                k=self.rerank_candidate_k,
             )
             return self.reranker.rerank(
                 question,
@@ -90,6 +101,12 @@ class RAGPipeline:
                 k or self.retriever.top_k,
             )
         return await self.retriever.search(question, k=k)
+
+    def preload_reranker(self) -> None:
+        if self.conditional_reranking:
+            if self.reranker is None:
+                self.reranker = QwenReranker()
+            self.reranker.warmup()
 
     def should_rerank(self, question: str, force_reranking: bool = False) -> bool:
         return force_reranking or (

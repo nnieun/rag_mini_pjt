@@ -8,10 +8,12 @@ class QwenReranker:
         self,
         model_id: str = "Qwen/Qwen3-Reranker-0.6B",
         max_length: int = 2048,
+        batch_size: int = 1,
         device: str | None = None,
     ):
         self.model_id = model_id
         self.max_length = max_length
+        self.batch_size = batch_size
         self.device = device
         self._model: Any | None = None
 
@@ -43,7 +45,11 @@ class QwenReranker:
             (question, searchable_candidate(document))
             for document in candidates
         ]
-        scores = model.predict(pairs, batch_size=1, show_progress_bar=False)
+        scores = model.predict(
+            pairs,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+        )
         scored = [
             {**document, "rerank_score": float(score)}
             for document, score in zip(candidates, scores)
@@ -53,6 +59,15 @@ class QwenReranker:
             key=lambda document: document["rerank_score"],
             reverse=True,
         )[:k]
+
+    def warmup(self) -> None:
+        """서버 시작 시 모델 로딩과 첫 추론 비용을 미리 지불합니다."""
+        model = self._load()
+        model.predict(
+            [("인공지능이란 무엇인가요?", "인공지능의 정의")],
+            batch_size=1,
+            show_progress_bar=False,
+        )
 
 
 def searchable_candidate(document: dict) -> str:

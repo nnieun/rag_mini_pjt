@@ -58,6 +58,13 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pipeline = pipeline_factory()
+        preload_reranker = os.getenv(
+            "RAG_RERANK_PRELOAD", "true"
+        ).lower() in {"1", "true", "yes", "on"}
+        if preload_reranker:
+            preload = getattr(pipeline, "preload_reranker", None)
+            if callable(preload):
+                preload()
         answer_cache = None
         cache_enabled = os.getenv(
             "RAG_ANSWER_CACHE_ENABLED", "true"
@@ -68,7 +75,7 @@ def create_app(
                 collection_name=pipeline.retriever.collection_name,
                 pipeline_version=os.getenv(
                     "RAG_CACHE_VERSION",
-                    "conditional-rerank-v3",
+                    "conditional-rerank-v4",
                 ),
                 ttl_days=int(os.getenv("RAG_CACHE_TTL_DAYS", "30")),
             )
