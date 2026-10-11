@@ -95,6 +95,13 @@ class PostgresAnswerCache:
             retrieved_articles=payload["retrieved_articles"],
             cache_hit=True,
             processing_ms=float(payload.get("processing_ms", 0.0)),
+            total_relevant=int(
+                payload.get("total_relevant", len(payload["sources"]))
+            ),
+            displayed_count=int(
+                payload.get("displayed_count", len(payload["sources"]))
+            ),
+            has_more=bool(payload.get("has_more", False)),
         )
 
     async def put(self, question: str, result: AnswerResult) -> None:

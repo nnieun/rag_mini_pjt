@@ -2,7 +2,13 @@ import asyncio
 from types import SimpleNamespace
 import unittest
 
-from rag.pipeline import RAGPipeline, is_abstention
+from rag.pipeline import (
+    RAGPipeline,
+    extract_related_source_ids,
+    is_abstention,
+    is_list_query,
+    is_pure_abstention,
+)
 
 
 class FakeRetriever:
@@ -46,6 +52,23 @@ class FakeRetriever:
 class FakeLLM:
     async def ainvoke(self, messages):
         return SimpleNamespace(content="고영향 인공지능은 ... [S1]")
+
+
+class AbstainingFakeLLM:
+    async def ainvoke(self, messages):
+        return SimpleNamespace(
+            content="제공된 AI 기본법 근거에서는 확인할 수 없습니다."
+        )
+
+
+class QualifiedAnswerFakeLLM:
+    async def ainvoke(self, messages):
+        return SimpleNamespace(
+            content=(
+                "일부 내용은 확인할 수 없습니다. "
+                "다만 관련 의무는 제2조에 규정되어 있습니다. [S1]"
+            )
+        )
 
 
 class FakeReranker:
@@ -93,6 +116,43 @@ class PipelineTest(unittest.TestCase):
             is_abstention("제공된 AI 기본법 근거에서는 확인할 수 없습니다")
         )
         self.assertFalse(is_abstention("제2조에 따라 적용됩니다."))
+        self.assertTrue(is_pure_abstention("확인할 수 없습니다."))
+        self.assertFalse(
+            is_pure_abstention("일부는 확인할 수 없습니다. 관련 조문입니다. [S1]")
+        )
+
+    def test_list_query_and_related_source_marker(self):
+        self.assertTrue(is_list_query("사업자의 의무 관련 조문을 정리해줘"))
+        self.assertFalse(is_list_query("고영향 인공지능이란 무엇인가요?"))
+
+        source_ids, answer = extract_related_source_ids(
+            "[[RELATED_SOURCES:S2,S4,S2]]\n관련 조문은 2개입니다."
+        )
+
+        self.assertEqual(source_ids, ["S2", "S4"])
+        self.assertEqual(answer, "관련 조문은 2개입니다.")
+
+    def test_abstention_answer_does_not_expose_sources(self):
+        pipeline = RAGPipeline(
+            retriever=FakeRetriever(),
+            llm=AbstainingFakeLLM(),
+        )
+
+        result = asyncio.run(pipeline.answer("저녁 메뉴를 추천해줘"))
+
+        self.assertEqual(result.sources, [])
+        self.assertTrue(is_abstention(result.answer))
+
+    def test_answer_with_citation_keeps_sources(self):
+        pipeline = RAGPipeline(
+            retriever=FakeRetriever(),
+            llm=QualifiedAnswerFakeLLM(),
+        )
+
+        result = asyncio.run(pipeline.answer("의무를 정리해줘"))
+
+        self.assertEqual(len(result.sources), 1)
+        self.assertEqual(result.sources[0].article, "제2조")
 
     def test_conditional_reranking_only_for_definition_query(self):
         reranker = FakeReranker()

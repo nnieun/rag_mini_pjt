@@ -39,6 +39,9 @@ class AskResponse(BaseModel):
     elapsed_ms: float
     cache_hit: bool = False
     processing_ms: float = 0.0
+    total_relevant: int = 0
+    displayed_count: int = 0
+    has_more: bool = False
 
 
 class HealthResponse(BaseModel):
@@ -75,7 +78,7 @@ def create_app(
                 collection_name=pipeline.retriever.collection_name,
                 pipeline_version=os.getenv(
                     "RAG_CACHE_VERSION",
-                    "conditional-rerank-v4",
+                    "conditional-rerank-v8",
                 ),
                 ttl_days=int(os.getenv("RAG_CACHE_TTL_DAYS", "30")),
             )

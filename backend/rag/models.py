@@ -63,6 +63,9 @@ class AnswerResult:
     retrieved_articles: list[str]
     cache_hit: bool = False
     processing_ms: float = 0.0
+    total_relevant: int = 0
+    displayed_count: int = 0
+    has_more: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,4 +75,7 @@ class AnswerResult:
             "retrieved_articles": self.retrieved_articles,
             "cache_hit": self.cache_hit,
             "processing_ms": self.processing_ms,
+            "total_relevant": self.total_relevant,
+            "displayed_count": self.displayed_count,
+            "has_more": self.has_more,
         }

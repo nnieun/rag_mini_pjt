@@ -1,4 +1,5 @@
 import os
+import re
 import time
 from typing import Any
 
@@ -18,6 +19,22 @@ ABSTENTION_MARKERS = (
     "명시되어 있지 않습니다",
     "근거가 없습니다",
 )
+LIST_QUERY_PATTERNS = (
+    "관련 조문",
+    "전체 조문",
+    "모든 조문",
+    "전부",
+    "목록",
+    "정리해",
+    "정리하",
+    "몇 개",
+    "몇개",
+    "어떤 조문",
+)
+RELATED_SOURCES_PATTERN = re.compile(
+    r"\[\[RELATED_SOURCES:\s*([^\]]*)\]\]",
+    re.IGNORECASE,
+)
 
 
 class RAGPipeline:
@@ -30,6 +47,7 @@ class RAGPipeline:
         answer_cache: Any | None = None,
         conditional_reranking: bool = False,
         rerank_candidate_k: int | None = None,
+        list_candidate_k: int = 20,
         max_retries: int = 3,
         retry_wait_seconds: int = 65,
     ):
@@ -41,6 +59,7 @@ class RAGPipeline:
         self.rerank_candidate_k = (
             rerank_candidate_k or retriever.candidate_k
         )
+        self.list_candidate_k = list_candidate_k
         self.max_retries = max_retries
         self.retry_wait_seconds = retry_wait_seconds
 
@@ -76,6 +95,7 @@ class RAGPipeline:
             rerank_candidate_k=int(
                 os.getenv("RAG_RERANK_CANDIDATE_K", "5")
             ),
+            list_candidate_k=int(os.getenv("RAG_LIST_CANDIDATE_K", "20")),
             max_retries=max_retries,
             retry_wait_seconds=wait_seconds,
         )
@@ -100,7 +120,10 @@ class RAGPipeline:
                 candidates,
                 k or self.retriever.top_k,
             )
-        return await self.retriever.search(question, k=k)
+        search_k = k
+        if search_k is None and is_list_query(question):
+            search_k = self.list_candidate_k
+        return await self.retriever.search(question, k=search_k)
 
     def preload_reranker(self) -> None:
         if self.conditional_reranking:
@@ -191,15 +214,31 @@ class RAGPipeline:
             )
 
         context, sources = self.build_context(results)
+        list_query = is_list_query(question)
+        list_instruction = ""
+        if list_query:
+            list_instruction = (
+                " 이 질문은 조문 목록형 질문입니다. 제공된 근거를 모두 검토해 "
+                "질문에 직접 관련된 출처 ID 전체를 첫 줄에 반드시 "
+                "'[[RELATED_SOURCES:S1,S2]]' 형식으로 출력하세요. 관련 조문의 "
+                "개수는 '현재 확장 검색에서 관련 조문 N개를 확인했습니다'라고 "
+                "안내하고, 우선 관련도가 높은 5개만 설명한 뒤 나머지 조문을 "
+                "더 볼 수 있다고 안내하세요. 관련성이 약한 조문은 "
+                "RELATED_SOURCES에 포함하지 마세요."
+            )
         messages = [
             (
                 "system",
                 "당신은 AI 기본법 안내자입니다. 제공된 법령 근거만 사용해 "
                 "한국어로 답하세요. 각 핵심 주장 뒤에 [S1] 형식으로 출처를 "
-                "표시하세요. 질문이 법률의 범위를 벗어나거나, 금액·요건·절차 "
-                "등 질문받은 구체적 내용이 근거에 없으면 반드시 '"
-                f"{ABSTENTION_PHRASE}'라고 먼저 밝히세요. 관련 조문이 검색되어도 "
-                "질문의 직접적인 답이 없으면 답을 추측하지 마세요.",
+                "표시하세요. 여러 의무나 관련 조문의 정리·요약을 요청받으면 "
+                "검색된 관련 조문을 종합하여 답하세요. 관련 근거가 하나라도 "
+                "있다면 거절 문구를 사용하지 마세요. 질문이 법률의 범위를 "
+                "완전히 벗어나거나 질문받은 내용을 근거에서 전혀 확인할 수 "
+                "없는 경우에만 다른 설명이나 인용을 덧붙이지 말고 정확히 '"
+                f"{ABSTENTION_PHRASE}.' 한 문장만 출력하세요. 일부 내용만 "
+                "확인할 수 있다면 확인 가능한 내용만 근거와 함께 답하고, "
+                f"확인할 수 없는 내용을 추측하지 마세요.{list_instruction}",
             ),
             ("human", f"질문: {question}\n\n법령 근거:\n{context}"),
         ]
@@ -212,9 +251,19 @@ class RAGPipeline:
         answer = response.content
         if not isinstance(answer, str):
             answer = str(answer)
+        if list_query:
+            related_ids, answer = extract_related_source_ids(answer)
+            if not related_ids:
+                related_ids = extract_cited_source_ids(answer)
+            if related_ids:
+                sources = filter_unique_sources(sources, related_ids)
+
+        answer_sources = [] if is_pure_abstention(answer) else sources
+        total_relevant = len(answer_sources)
+        displayed_count = min(self.retriever.top_k, total_relevant)
         result = AnswerResult(
             answer=answer,
-            sources=sources,
+            sources=answer_sources,
             method=(
                 f"{self.retriever.method}+Reranking"
                 if reranking_applied
@@ -225,6 +274,9 @@ class RAGPipeline:
                 (time.perf_counter() - processing_started) * 1000,
                 2,
             ),
+            total_relevant=total_relevant,
+            displayed_count=displayed_count,
+            has_more=total_relevant > displayed_count,
         )
         if self.answer_cache is not None:
             await self.answer_cache.put(question, result)
@@ -240,3 +292,42 @@ class RAGPipeline:
 def is_abstention(answer: str) -> bool:
     normalized = " ".join(answer.split())
     return any(marker in normalized for marker in ABSTENTION_MARKERS)
+
+
+def is_pure_abstention(answer: str) -> bool:
+    """관련 조문을 실제로 인용하지 않은 거절 답변인지 판별합니다."""
+    return is_abstention(answer) and re.search(r"\[S\d+\]", answer) is None
+
+
+def is_list_query(question: str) -> bool:
+    normalized = " ".join(question.split())
+    return any(pattern in normalized for pattern in LIST_QUERY_PATTERNS)
+
+
+def extract_cited_source_ids(answer: str) -> list[str]:
+    return list(dict.fromkeys(re.findall(r"\[(S\d+)\]", answer)))
+
+
+def extract_related_source_ids(answer: str) -> tuple[list[str], str]:
+    match = RELATED_SOURCES_PATTERN.search(answer)
+    if match is None:
+        return [], answer
+    source_ids = list(dict.fromkeys(re.findall(r"S\d+", match.group(1))))
+    cleaned = RELATED_SOURCES_PATTERN.sub("", answer, count=1).lstrip()
+    return source_ids, cleaned
+
+
+def filter_unique_sources(
+    sources: list[Source],
+    source_ids: list[str],
+) -> list[Source]:
+    by_id = {source.source_id: source for source in sources}
+    selected: list[Source] = []
+    seen_articles: set[str] = set()
+    for source_id in source_ids:
+        source = by_id.get(source_id)
+        if source is None or source.article in seen_articles:
+            continue
+        seen_articles.add(source.article)
+        selected.append(source)
+    return selected

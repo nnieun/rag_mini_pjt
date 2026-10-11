@@ -37,6 +37,8 @@ class ApiTest(unittest.TestCase):
         self.assertIn("answer", response_schema["properties"])
         self.assertIn("sources", response_schema["properties"])
         self.assertIn("retrieved_articles", response_schema["properties"])
+        self.assertIn("total_relevant", response_schema["properties"])
+        self.assertIn("has_more", response_schema["properties"])
 
     def test_question_validation(self):
         with self.assertRaises(ValidationError):
