@@ -2,7 +2,7 @@
 
 법률을 잘 모르는 사용자도 자연어 질문을 통해 **인공지능 발전과 신뢰 기반 조성 등에 관한 기본법**을 이해할 수 있도록 만드는 근거 기반 QA 프로젝트다.
 
-국가법령정보센터 Open API에서 법령 XML을 수집하고, 법률 구조에 맞게 청킹하여 Qdrant에 저장한다. 이후 Dense Search, BM25, RRF, Qwen Reranking을 비교하고, 검색된 법률 원문만 사용해 답변과 출처를 생성한다.
+국가법령정보센터 Open API에서 법령 XML을 수집하고, 법률 구조에 맞게 청킹하여 Qdrant에 저장한다. 이후 Dense Search, BM25, RRF, 조건부 Qwen Reranking으로 근거를 찾고, 검색된 법률 원문만 사용해 답변과 출처를 생성한다. React 프론트엔드는 후속 대화, 질문 기록, 완료 알림, 근거 원문과 목록형 질문의 추가 조문 보기를 제공한다.
 
 > 대상 법령: 인공지능 발전과 신뢰 기반 조성 등에 관한 기본법  
 > 시행: 2026년 7월 21일  
@@ -22,9 +22,13 @@ Embedding 및 Qdrant 저장
     ↓
 Dense + BM25 + RRF 검색
     ↓
-선택적 Qwen Reranking
+정의형 질문만 Qwen Reranking
+    ↓
+목록형 질문은 확장 검색 및 관련 조문 집계
     ↓
 근거 기반 답변과 출처 생성
+    ↓
+PostgreSQL 답변 캐시
     ↓
 Retrieval 및 Answer 평가
 ```
@@ -51,9 +55,13 @@ Retrieval 및 Answer 평가
 | 근거 기반 답변 | 모듈화 및 API 검증 완료 | 답변과 `[S1]` 출처 생성 |
 | Answer 품질 평가 | 완료 | 10문항 LLM Judge + 사람 검토용 CSV |
 | Abstention 평가 | 완료 | 범위 밖 5문항 Accuracy 100% |
-| FastAPI `POST /ask` | 완료 | Hybrid 검색, 정의형 조건부 Qwen Reranking, 답변 + 출처 반환 |
+| FastAPI `POST /ask` | 완료 | Hybrid 검색, 정의형 조건부 Qwen Reranking, 답변 + 출처 및 목록 메타데이터 반환 |
 | PostgreSQL 답변 캐시 | 완료 | 동일 질문의 검색·리랭킹·LLM 호출 재사용, 기본 TTL 30일 |
-| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API 13개 통과 |
+| 목록형 확장 검색 | 완료 | 관련 조문을 최대 20개까지 탐색하고 5개 우선 표시 |
+| 후속 대화 UI | 완료 | 기존 대화에 질문·답변 누적 및 이전 질문 맥락 전달 |
+| 답변 완료 알림 | 완료 | 검색 중 새 질문 화면으로 이동해도 완료 알림 및 결과 복원 |
+| 근거 없음 처리 | 완료 | 순수 거절 답변은 출처와 근거 패널을 표시하지 않음 |
+| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API 20개 통과 |
 
 ## 3. 프로젝트 구조
 
@@ -220,12 +228,32 @@ BM25 입력에는 법령명, 장, 절, 조, 항, 호, 목, 제목과 원문을 �
 
 Hybrid 후보를 `Qwen/Qwen3-Reranker-0.6B`로 재정렬한다.
 
+전체 질문에 적용하면 일부 정답 조문을 Top-5 밖으로 밀 수 있어 현재 서비스에서는 정의형 질문에만 조건부로 적용한다. GPU에서 후보 5개, 최대 길이 512, 배치 크기 5로 실행하며 서버 시작 시 모델을 미리 워밍업한다.
+
 단일 정의 질문 결과:
 
 | 방법 | 정답 제2조 순위 | Hit@5 | Recall@5 | MRR@5 |
 |---|---:|---:|---:|---:|
 | Hybrid | 2위 | 1.0 | 1.0 | 0.5 |
 | Hybrid+Reranking | 1위 | 1.0 | 1.0 | 1.0 |
+
+### 목록형 확장 검색
+
+일반 질문은 `Top-K=5`를 유지한다. `관련 조문`, `전체 조문`, `모든 조문`, `정리`, `목록`, `몇 개`처럼 전체 목록을 기대하는 질문은 후보를 최대 20개까지 확장한다.
+
+```text
+목록형 질문 감지
+    ↓
+Hybrid 후보 최대 20개 검색
+    ↓
+LLM이 직접 관련된 Source ID 선택
+    ↓
+조문 번호 기준 중복 제거 및 개수 계산
+    ↓
+5개 우선 표시 + 나머지 N개 조문 보기
+```
+
+`total_relevant`는 법률상 절대적인 전체 개수가 아니라 **현재 확장 검색에서 직접 관련성이 확인된 조문 수**다. 법령 규모가 커지면 주체·의무 유형·주제 메타데이터 필터와 `search_id` 기반 페이지네이션으로 확장할 예정이다.
 
 ## 8. Retrieval 평가
 
@@ -260,9 +288,7 @@ Golden Set은 `backend/eval/golden_set_v2.jsonl`이며 총 45문항이다. 정�
 - 그러나 일부 정답을 Top-5 밖으로 밀어 Hit@5와 Recall@5는 Hybrid보다 낮았다.
 - 검색 누락 방지를 우선하는 현재 기준에서는 **Hybrid(C)**가 최종 Retrieval 방법이다.
 
-> 최종 선택: **Dense + BM25 + RRF 기반 Hybrid Search(C)**
-
-Reranking은 후보 수와 결합 방식을 조정한 후 다시 평가할 수 있다.
+> 최종 선택: **Hybrid Search(C)를 기본으로 사용하고 정의형 질문에만 최적화된 Reranking을 적용**
 
 ### 8.3 조건부 리랭커 속도 비교
 
@@ -361,7 +387,7 @@ cd backend
 uv run python -m unittest discover -s tests -v
 ```
 
-현재 13개 테스트가 XML 로딩, 최종 청크 수와 Anchor, 장·절 독립 청크 방지, BM25/RRF/Hybrid 검색, 임베딩 캐시, 부모 확장, 출처 답변, Abstention 판정 및 API 스키마를 확인한다. 실제 Qdrant와 LLM을 연결한 `/health`, `/ask` 통합 테스트도 완료했다.
+현재 20개 테스트가 XML 로딩, 최종 청크 수와 Anchor, 장·절 독립 청크 방지, BM25/RRF/Hybrid 검색, 임베딩 캐시, 부모 확장, 조건부 리랭킹, 목록형 질문 판별, 출처 선택, 순수 Abstention 판정 및 API 스키마를 확인한다. 실제 Qdrant와 LLM을 연결한 `/health`, `/ask` 통합 테스트도 완료했다.
 
 ## 11. 범위 밖 질문
 
@@ -381,7 +407,9 @@ q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 
 - 제공된 법령 근거만 사용한다.
 - 핵심 주장 뒤에 `[S1]` 형식으로 출처를 표시한다.
-- 근거가 부족하면 확인할 수 없다고 답한다.
+- 관련 근거가 하나라도 있으면 거절 문구 없이 확인 가능한 내용을 답한다.
+- 근거가 전혀 없으면 `제공된 AI 기본법 근거에서는 확인할 수 없습니다.` 한 문장만 반환한다.
+- 순수 거절 답변에는 `sources=[]`를 반환하고 근거 패널을 표시하지 않는다.
 - 법률 내용이나 조문을 추측하지 않는다.
 
 ## 13. Answer 평가
@@ -422,6 +450,19 @@ EMBEDDING_MODEL=text-embedding-3-small
 
 QDRANT_URL=http://localhost:6333
 DATABASE_URL=postgresql://aiuser:local_dev_password@localhost:5432/ai_basic_law
+
+RAG_TOP_K=5
+RAG_CANDIDATE_K=20
+RAG_LIST_CANDIDATE_K=20
+RAG_CONDITIONAL_RERANK=true
+RAG_RERANK_CANDIDATE_K=5
+RAG_RERANK_MAX_LENGTH=512
+RAG_RERANK_BATCH_SIZE=5
+RAG_RERANK_PRELOAD=true
+
+RAG_ANSWER_CACHE_ENABLED=true
+RAG_CACHE_TTL_DAYS=30
+RAG_CACHE_VERSION=conditional-rerank-v8
 ```
 
 OpenAI를 직접 사용하면 `OPENAI_API_KEY`를 사용할 수도 있다. `.env`는 Git에 커밋하지 않는다.
@@ -469,13 +510,15 @@ uv run uvicorn app.main:app --reload
 backend/app/main.py
 ```
 
-API는 기본적으로 **Hybrid(C)**를 사용한다. 다만 정의형 질문으로 판별되면 Hybrid 후보에만 Qwen Reranking을 적용한다. 45문항 비교에서 이 방식은 Hybrid의 Hit@5와 Recall@5를 유지하면서 전체 MRR@5를 `0.7210`에서 `0.7508`로 높였다. `.env`에서 `RAG_CONDITIONAL_RERANK=false`로 끌 수 있다.
+API는 기본적으로 **Hybrid(C)**를 사용한다. 정의형 질문이면 Hybrid 후보에 Qwen Reranking을 적용하고, 목록형 질문이면 검색 범위를 최대 20개로 확장한다. 동일 질문은 PostgreSQL 캐시에서 반환하며 `refresh=true`로 검색·답변을 다시 생성할 수 있다. `.env`에서 `RAG_CONDITIONAL_RERANK=false`로 조건부 리랭킹을 끌 수 있다.
 
-### 14.1 요청 처리 흐름
+### 16.1 요청 처리 흐름
 
 ```text
 POST /ask
     ↓
+PostgreSQL 답변 캐시 확인
+    ↓ cache miss
 질문 Embedding 생성
     ↓
 Qdrant Dense 후보 검색
@@ -483,6 +526,9 @@ Qdrant Dense 후보 검색
 BM25 키워드 후보 검색
     ↓
 RRF 순위 결합
+    ↓
+정의형: 조건부 Qwen Reranking
+목록형: 확장 검색 및 관련 Source 판별
     ↓
 parent_id로 전체 조문 확장
     ↓
@@ -493,7 +539,7 @@ Answer + Sources 반환
 
 서버가 시작될 때 Qdrant에서 청크를 한 번 로딩하고 BM25 인덱스를 생성한다. 요청마다 청크 전체를 다시 읽지 않으며, 동일한 질문의 Embedding은 메모리에 캐시한다.
 
-### 14.2 엔드포인트
+### 16.2 엔드포인트
 
 | Method | Path | 설명 |
 |---|---|---|
@@ -519,7 +565,7 @@ curl http://127.0.0.1:8000/health
 }
 ```
 
-### 14.3 질문 요청
+### 16.3 질문 요청
 
 ```bash
 curl -X POST http://127.0.0.1:8000/ask \
@@ -531,7 +577,8 @@ curl -X POST http://127.0.0.1:8000/ask \
 
 ```json
 {
-  "question": "고영향 인공지능이란 무엇인가요?"
+  "question": "고영향 인공지능이란 무엇인가요?",
+  "refresh": false
 }
 ```
 
@@ -539,10 +586,10 @@ curl -X POST http://127.0.0.1:8000/ask \
 
 ```json
 {
-  "answer": "고영향 인공지능이란 ... [S2]",
+  "answer": "고영향 인공지능이란 ... [S1]",
   "sources": [
     {
-      "source_id": "S2",
+      "source_id": "S1",
       "article": "제2조",
       "paragraph": "",
       "item": "",
@@ -551,17 +598,25 @@ curl -X POST http://127.0.0.1:8000/ask \
       "content": "제2조(정의) ..."
     }
   ],
-  "method": "Hybrid(Dense+BM25+RRF)",
-  "elapsed_ms": 5516.96
+  "method": "Hybrid(Dense+BM25+RRF)+Reranking",
+  "retrieved_articles": ["제2조", "제35조", "제33조"],
+  "elapsed_ms": 5516.96,
+  "cache_hit": false,
+  "processing_ms": 5480.21,
+  "total_relevant": 1,
+  "displayed_count": 1,
+  "has_more": false
 }
 ```
 
 `sources`에는 검색된 하위 청크가 아니라 `parent_id`로 확장한 전체 조문이 들어간다. 답변의 `[S1]`, `[S2]` 표시는 각 `source_id`와 대응한다.
 
-### 14.4 오류 및 요청 제한 처리
+목록형 질문에서 관련 조문이 5개를 넘으면 `sources`에는 관련 조문 전체가 포함되고, 프론트엔드는 `displayed_count=5`까지만 먼저 표시한다. `has_more=true`이면 `나머지 N개 조문 보기` 버튼을 제공한다.
+
+### 16.4 오류 및 요청 제한 처리
 
 - 질문은 2자 이상 1,000자 이하로 검증한다.
-- 관련 검색 결과가 없으면 `404`를 반환한다.
+- 검색 결과가 없거나 법률 근거가 전혀 없으면 `200 OK`와 순수 거절 답변, 빈 `sources`를 반환한다.
 - Embedding 또는 LLM 처리 오류는 `502`로 반환한다.
 - 429 Rate Limit은 기본 65초 대기 후 최대 3회 재시도한다.
 - 질문에 대한 법률 근거가 부족하면 LLM이 추측하지 않고 확인할 수 없다고 답하도록 지시한다.
@@ -572,12 +627,18 @@ curl -X POST http://127.0.0.1:8000/ask \
 QDRANT_COLLECTION_NAME=ai_basic_law_adaptive_anchor_v1
 RAG_TOP_K=5
 RAG_CANDIDATE_K=20
+RAG_LIST_CANDIDATE_K=20
 RAG_RRF_K=60
+RAG_CONDITIONAL_RERANK=true
+RAG_RERANK_CANDIDATE_K=5
+RAG_RERANK_MAX_LENGTH=512
+RAG_RERANK_BATCH_SIZE=5
+RAG_RERANK_PRELOAD=true
 RAG_RETRY_WAIT_SECONDS=65
 RAG_MAX_RETRIES=3
 ```
 
-### 14.5 실제 동작 검증
+### 16.5 실제 동작 검증
 
 로컬 Qdrant와 LLM을 연결해 다음 항목을 확인했다.
 
@@ -592,6 +653,23 @@ RAG_MAX_RETRIES=3
 | 대표 질문 응답 시간 | 약 5.5초 |
 | 정의 근거 | 제2조 |
 | 답변 출처 표시 | `[S1]`, `[S2]` 형식 |
+
+### 16.6 프론트엔드 동작
+
+React 프론트엔드는 다음 기능을 제공한다.
+
+- 새 질문과 최근 질문 기록
+- 같은 대화 안에서 후속 질문·답변 누적
+- 후속 질문 요청 시 최근 질문 맥락 전달
+- 처리 중 새 질문 화면으로 이동해도 기존 요청 계속 실행
+- 백그라운드 답변 완료 시 인앱 알림 표시 및 결과 복원
+- PostgreSQL 캐시 적중 시 기존 처리 시간과 캐시 조회 시간 구분 표시
+- 개별 질문 및 전체 질문 기록 삭제 확인
+- 답변의 `[S번호]`와 오른쪽 근거 원문 패널 연결
+- 순수 거절 답변이면 근거 배지와 근거 패널 숨김
+- 목록형 질문은 5개 우선 표시 후 `나머지 N개 조문 보기`
+
+브라우저 탭 제목은 `법령 검색 서비스`이며 법률 저울 파비콘을 사용한다.
 
 ## 17. 실험 Notebook 비교
 
@@ -613,17 +691,20 @@ RAG_MAX_RETRIES=3
 3. 짧은 조문은 유지하고 긴 조문만 필요한 깊이로 분해하는 적응형 청킹이 적합하다.
 4. 긴 정의나 목록의 도입 문장은 Anchor로 보존해야 한다.
 5. Dense보다 Dense + BM25 + RRF Hybrid가 효과적이었다.
-6. Reranking은 MRR을 높였지만 현재 설정에서는 Hit@5와 Recall@5를 조금 낮췄다.
-7. 현재 최종 Retrieval 선택은 Hybrid(C)다.
-8. 검색 성능과 별개로 Answer의 근거 충실성과 Hallucination을 평가해야 한다.
+6. Reranking은 전체 적용보다 정의형 질문에 조건부로 적용하는 편이 안정적이었다.
+7. 후보 5개·길이 512·배치 5의 GPU 리랭킹은 정확도를 유지하면서 워밍 추론 시간을 약 160ms로 줄였다.
+8. 일반 질문은 Hybrid(C), 정의형 질문은 Hybrid+Reranking, 목록형 질문은 확장 Hybrid 검색을 사용한다.
+9. Top-K는 전체 관련 조문 개수가 아니므로 목록형 질문은 관련 Source를 별도로 집계해야 한다.
+10. 검색 성능과 별개로 Answer의 근거 충실성, Abstention 및 Hallucination을 평가해야 한다.
 
 ## 19. 다음 작업
 
-- Notebook 코드를 `backend/rag/loader.py`, `chunker.py`, `vectorstore.py`, `retriever.py`, `reranker.py`, `pipeline.py`로 모듈화
-- 범위 밖 질문의 Abstention Accuracy 추가
-- 전체 Golden Set Answer 평가
-- MRR 향상을 유지하면서 Hit@5 하락을 줄이는 Reranking 개선
-- 응답에 조·항·호·목 및 법령 원문 링크 포함
+- 목록형 검색을 주체·의무 유형·주제 metadata filtering으로 고도화
+- 법령 수가 늘어날 때 `search_id`와 cursor pagination으로 근거 목록 분리
+- 후속 질문을 단순 질문 문자열 결합이 아닌 서버 측 대화 세션으로 관리
+- 동기 GPU 리랭킹을 작업 스레드로 분리하고 동시 실행 수 제한
+- Answer 품질 평가 문항을 전체 Golden Set으로 확대
+- 배포 환경용 FastAPI·프론트엔드 컨테이너와 CI 구축
 
 ## 20. 시행착오 목록
 
