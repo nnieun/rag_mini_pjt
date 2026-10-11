@@ -129,7 +129,21 @@ export default function App() {
   };
 
   const submitQuestion = (event: FormEvent) => { event.preventDefault(); void runQuestion(question, false, screen === "answer"); };
-  const selectCitation = (sourceId: string) => { setSelectedCitation(sourceId); setEvidenceOpen(true); };
+  const selectCitation = (sourceId: string) => {
+    const sourceIndex = result?.sources.findIndex(
+      (source) => source.source_id === sourceId,
+    ) ?? -1;
+    if (sourceIndex >= initialSourceCount) setShowAllSources(true);
+    setSelectedCitation(sourceId);
+    setEvidenceOpen(true);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        document
+          .querySelector<HTMLElement>(`[data-source-id="${sourceId}"]`)
+          ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+  };
   const startNewQuestion = () => { viewVersion.current += 1; setScreen("empty"); setQuestion(""); setSubmittedQuestion(""); setConversationRoot(""); setResult(null); setPreviousTurns([]); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); setShowAllSources(false); };
   const openCompletedAnswer = () => {
     if (!completionNotification) return;
@@ -211,7 +225,7 @@ export default function App() {
         {screen === "answer" && <form className="composer-wrap" onSubmit={submitQuestion}><div className="composer"><input aria-label="후속 질문" disabled={loading} onChange={(event) => setQuestion(event.target.value)} placeholder="후속 질문을 입력하세요" value={question} /><button aria-label="질문 보내기" className="send-button" disabled={loading} type="submit"><Icon name="send" size={17} /></button><span>AI 기본법 본문에서 근거를 찾아 답합니다</span></div></form>}
       </section>
       {screen === "answer" && result && result.sources.length > 0 && !evidenceOpen && <button className="evidence-restore" onClick={() => setEvidenceOpen(true)}><Icon name="file" size={17} />근거 조문 <span>{result.sources.length}</span></button>}
-      {screen === "answer" && result && result.sources.length > 0 && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>현재 검색에서 관련 근거 {result.total_relevant || result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.total_relevant || result.sources.length}</span></button></div><div className="evidence-scroll">{visibleSources.map((source, index) => <article className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}{remainingSourceCount > 0 && <button className="more-sources-button" onClick={() => setShowAllSources(true)}>나머지 {remainingSourceCount}개 조문 보기 <Icon name="chevron" size={15} /></button>}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
+      {screen === "answer" && result && result.sources.length > 0 && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>현재 검색에서 관련 근거 {result.total_relevant || result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.total_relevant || result.sources.length}</span></button></div><div className="evidence-scroll">{visibleSources.map((source, index) => <article aria-current={selectedCitation === source.source_id ? "true" : undefined} className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} data-source-id={source.source_id} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}{remainingSourceCount > 0 && <button className="more-sources-button" onClick={() => setShowAllSources(true)}>나머지 {remainingSourceCount}개 조문 보기 <Icon name="chevron" size={15} /></button>}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
     </div>
     {completionNotification && (
       <div className="completion-toast" role="status">
