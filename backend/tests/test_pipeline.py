@@ -3,7 +3,9 @@ from types import SimpleNamespace
 import unittest
 
 from rag.pipeline import (
+    ABSTENTION_PHRASE,
     RAGPipeline,
+    extract_answerability,
     extract_related_source_ids,
     is_abstention,
     is_list_query,
@@ -71,6 +73,17 @@ class QualifiedAnswerFakeLLM:
         )
 
 
+class OutOfScopeAnswerFakeLLM:
+    async def ainvoke(self, messages):
+        return SimpleNamespace(
+            content=(
+                "[[ANSWERABLE:NO]]\n"
+                "저녁에는 비빔밥을 추천합니다. [S1]\n"
+                "AI 기본법에서는 확인할 수 없습니다."
+            )
+        )
+
+
 class FakeReranker:
     def __init__(self):
         self.calls = 0
@@ -132,6 +145,13 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(source_ids, ["S2", "S4"])
         self.assertEqual(answer, "관련 조문은 2개입니다.")
 
+    def test_answerability_marker(self):
+        answerable, answer = extract_answerability(
+            "[[ANSWERABLE:NO]]\n제공된 근거로 답할 수 없습니다."
+        )
+        self.assertFalse(answerable)
+        self.assertEqual(answer, "제공된 근거로 답할 수 없습니다.")
+
     def test_abstention_answer_does_not_expose_sources(self):
         pipeline = RAGPipeline(
             retriever=FakeRetriever(),
@@ -142,6 +162,17 @@ class PipelineTest(unittest.TestCase):
 
         self.assertEqual(result.sources, [])
         self.assertTrue(is_abstention(result.answer))
+
+    def test_out_of_scope_marker_discards_generated_answer_and_sources(self):
+        pipeline = RAGPipeline(
+            retriever=FakeRetriever(),
+            llm=OutOfScopeAnswerFakeLLM(),
+        )
+
+        result = asyncio.run(pipeline.answer("저녁 메뉴를 추천해줘"))
+
+        self.assertEqual(result.answer, f"{ABSTENTION_PHRASE}.")
+        self.assertEqual(result.sources, [])
 
     def test_answer_with_citation_keeps_sources(self):
         pipeline = RAGPipeline(

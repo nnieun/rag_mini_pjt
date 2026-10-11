@@ -35,6 +35,10 @@ RELATED_SOURCES_PATTERN = re.compile(
     r"\[\[RELATED_SOURCES:\s*([^\]]*)\]\]",
     re.IGNORECASE,
 )
+ANSWERABILITY_PATTERN = re.compile(
+    r"\[\[ANSWERABLE:\s*(YES|NO)\s*\]\]",
+    re.IGNORECASE,
+)
 
 
 class RAGPipeline:
@@ -230,6 +234,12 @@ class RAGPipeline:
             (
                 "system",
                 "당신은 AI 기본법 안내자입니다. 제공된 법령 근거만 사용해 "
+                "먼저 질문의 핵심 요청을 제공된 법령 근거만으로 직접 답할 "
+                "수 있는지 판단하세요. 답할 수 있으면 첫 줄에 "
+                "'[[ANSWERABLE:YES]]', 답할 수 없으면 첫 줄에 "
+                "'[[ANSWERABLE:NO]]'를 출력하세요. 음식·날씨·여행·코딩 등 "
+                "AI 기본법과 무관한 질문은 검색 결과에 단어가 일부 겹쳐도 "
+                "반드시 NO입니다. NO인 경우 일반 지식으로 답하지 마세요. "
                 "한국어로 답하세요. 각 핵심 주장 뒤에 [S1] 형식으로 출처를 "
                 "표시하세요. 여러 의무나 관련 조문의 정리·요약을 요청받으면 "
                 "검색된 관련 조문을 종합하여 답하세요. 관련 근거가 하나라도 "
@@ -251,6 +261,10 @@ class RAGPipeline:
         answer = response.content
         if not isinstance(answer, str):
             answer = str(answer)
+        answerable, answer = extract_answerability(answer)
+        if answerable is False:
+            answer = f"{ABSTENTION_PHRASE}."
+            sources = []
         if list_query:
             related_ids, answer = extract_related_source_ids(answer)
             if not related_ids:
@@ -315,6 +329,16 @@ def extract_related_source_ids(answer: str) -> tuple[list[str], str]:
     source_ids = list(dict.fromkeys(re.findall(r"S\d+", match.group(1))))
     cleaned = RELATED_SOURCES_PATTERN.sub("", answer, count=1).lstrip()
     return source_ids, cleaned
+
+
+def extract_answerability(answer: str) -> tuple[bool | None, str]:
+    """LLM의 답변 가능 여부 표식을 읽고 사용자 답변에서는 제거합니다."""
+    match = ANSWERABILITY_PATTERN.search(answer)
+    if match is None:
+        return None, answer
+    answerable = match.group(1).upper() == "YES"
+    cleaned = ANSWERABILITY_PATTERN.sub("", answer, count=1).lstrip()
+    return answerable, cleaned
 
 
 def filter_unique_sources(

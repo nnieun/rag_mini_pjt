@@ -78,7 +78,7 @@ def create_app(
                 collection_name=pipeline.retriever.collection_name,
                 pipeline_version=os.getenv(
                     "RAG_CACHE_VERSION",
-                    "conditional-rerank-v8",
+                    "conditional-rerank-v9",
                 ),
                 ttl_days=int(os.getenv("RAG_CACHE_TTL_DAYS", "30")),
             )
