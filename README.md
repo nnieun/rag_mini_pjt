@@ -11,6 +11,55 @@
 
 프로젝트 진행 중 발생한 오류, 실패한 접근, 해결 과정은 [시행착오 기록](docs/TRIALS_AND_ERRORS.md)에 정리되어 있다.
 
+## 서비스 화면
+
+### 근거 기반 법령 답변
+
+![AI 기본법 법령 검색 서비스 화면](docs/assets/service-screen.png)
+
+화면에는 질문·답변, `[S번호]` 인용, 법령 원문 근거 패널, 검색 과정, 후속 질문 입력과 최근 질문 기록이 함께 나타난다.
+
+### 범위 밖 질문에 대한 답변 거절
+
+![AI 기본법 범위 밖 질문 거절 화면](docs/assets/out-of-scope-after.png)
+
+AI 기본법에서 확인할 수 없는 질문에는 일반 지식으로 답을 만들지 않는다. 정해진 거절 문장만 반환하고 관련 없는 근거 조문도 노출하지 않는다.
+
+## API·RAG 아키텍처
+
+```mermaid
+flowchart LR
+    user["사용자"] --> frontend["React 법령 검색 UI"]
+    frontend -->|"POST /ask"| api["FastAPI"]
+
+    api --> cache{"PostgreSQL 답변 캐시"}
+    cache -->|"Cache hit"| frontend
+    cache -->|"Cache miss"| classify{"질문 유형 판별"}
+
+    classify -->|"일반형·정의형 Top 5"| scope["검색 범위 결정"]
+    classify -->|"목록형 Top 20"| scope
+
+    scope --> embedding["Embedding API"]
+    scope --> bm25["In-memory BM25"]
+    embedding --> dense["Qdrant Dense Search"]
+    qdrant[("Qdrant Vector DB")] --> dense
+    dense --> rrf["RRF 결합"]
+    bm25 --> rrf
+
+    rrf --> definition{"정의형 질문인가?"}
+    definition -->|"Yes"| reranker["Qwen GPU Reranking"]
+    definition -->|"No"| parent["Parent 조문 확장"]
+    reranker --> parent
+
+    parent --> llm["LLM 근거 기반 답변"]
+    llm --> validation["인용·Abstention 검증"]
+    validation --> save["PostgreSQL 캐시 저장"]
+    save --> api
+    api -->|"Answer + Sources"| frontend
+```
+
+일반 질문은 `Top-K=5` Hybrid Search를 사용하고, 정의형 질문만 Qwen 리랭킹을 거친다. 목록형 질문은 후보를 최대 20개까지 확장해 관련 조문 수를 계산하고 처음 5개를 우선 표시한다.
+
 ## 1. 목표와 전체 흐름
 
 ```text
