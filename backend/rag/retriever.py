@@ -72,6 +72,74 @@ def reciprocal_rank_fusion(
     ]
 
 
+DEFINITION_PATTERNS = (
+    "이란",
+    "정의",
+    "뜻",
+    "의미",
+    "누구를 말",
+    "무엇인가",
+    "어떤 사람",
+)
+
+NON_DEFINITION_PATTERNS = (
+    "확인 절차",
+    "해당 여부",
+    "평가 방법",
+    "평가 항목",
+    "어떻게 해야",
+    "의무",
+    "과태료",
+    "처벌",
+)
+
+
+def is_definition_query(question: str) -> bool:
+    """질문의 표현만으로 정의형 질문인지 보수적으로 판별합니다."""
+    normalized = " ".join(question.split())
+    if any(pattern in normalized for pattern in NON_DEFINITION_PATTERNS):
+        return False
+    return any(pattern in normalized for pattern in DEFINITION_PATTERNS)
+
+
+def definition_metadata_score(document: dict) -> float:
+    """정의 조항·정의문·앵커 청크에 설명 가능한 소폭 가점을 줍니다."""
+    title = str(document.get("title") or "")
+    content = str(document.get("content") or "")
+    score = 0.0
+    if title == "정의":
+        score += 3.0
+    if "이란" in content and "말한다" in content:
+        score += 2.0
+    if document.get("chunk_role") == "anchor":
+        score += 1.0
+    return score
+
+
+def apply_definition_metadata_ranking(
+    question: str,
+    results: list[dict],
+) -> list[dict]:
+    """정의형 질문에만 기존 Hybrid 순위와 메타데이터 순위를 RRF로 결합합니다."""
+    if not is_definition_query(question):
+        return list(results)
+
+    metadata_ranked = sorted(
+        results,
+        key=lambda document: definition_metadata_score(document),
+        reverse=True,
+    )
+    # 원래 Hybrid 순위를 보존하되 정의 메타데이터 신호에 2배의 표를 줍니다.
+    reranked = reciprocal_rank_fusion([results, metadata_ranked, metadata_ranked])
+    return [
+        {
+            **document,
+            "definition_metadata_score": definition_metadata_score(document),
+        }
+        for document in reranked
+    ]
+
+
 class HybridRetriever:
     method = "Hybrid(Dense+BM25+RRF)"
 

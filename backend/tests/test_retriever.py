@@ -3,7 +3,13 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from rag.retriever import HybridRetriever, reciprocal_rank_fusion, tokenize
+from rag.retriever import (
+    HybridRetriever,
+    apply_definition_metadata_ranking,
+    is_definition_query,
+    reciprocal_rank_fusion,
+    tokenize,
+)
 
 
 class FakeEmbedding:
@@ -91,6 +97,31 @@ class RetrieverTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(embedding.calls, 1)
         self.assertIsNotNone(qdrant.query_filter)
+
+    def test_definition_query_detection_is_conditional(self):
+        self.assertTrue(is_definition_query("고영향 인공지능이란 무엇인가요?"))
+        self.assertTrue(is_definition_query("생성형 인공지능은 어떻게 정의되나요?"))
+        self.assertFalse(is_definition_query("고영향 인공지능 확인 절차는 무엇인가요?"))
+
+    def test_definition_metadata_ranking_promotes_definition(self):
+        results = [
+            {
+                "chunk_id": "confirm",
+                "title": "고영향 인공지능의 확인",
+                "content": "해당 여부를 확인한다.",
+            },
+            {
+                "chunk_id": "definition",
+                "title": "정의",
+                "chunk_role": "anchor",
+                "content": "고영향 인공지능이란 시스템을 말한다.",
+            },
+        ]
+        ranked = apply_definition_metadata_ranking(
+            "고영향 인공지능이란 무엇인가요?",
+            results,
+        )
+        self.assertEqual(ranked[0]["chunk_id"], "definition")
 
 
 if __name__ == "__main__":

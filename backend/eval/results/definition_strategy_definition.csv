@@ -1,0 +1,5 @@
+method,Hit@5,Recall@5,MRR@5,elapsed_ms
+Hybrid,1.0,1.0,0.9,21.36931880377233
+Hybrid+DefinitionMetadata,0.8,0.8,0.8,21.43195840762928
+Hybrid+ConditionalRerank,1.0,1.0,1.0,4935.123968997505
+Hybrid+Metadata+ConditionalRerank,1.0,1.0,0.9,4935.1866086013615
