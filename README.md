@@ -264,6 +264,27 @@ Golden Set은 `backend/eval/golden_set_v2.jsonl`이며 총 45문항이다. 정�
 
 Reranking은 후보 수와 결합 방식을 조정한 후 다시 평가할 수 있다.
 
+### 8.3 조건부 리랭커 속도 비교
+
+정의형 질문 5문항을 대상으로 GPU에서 후보 수, 입력 길이, 배치 크기를 비교했다.
+
+| 설정 | 후보 수 | max length | batch | Hit@5 | Recall@5 | MRR@5 | Cold | Warm 평균 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Baseline | 20 | 2048 | 1 | 1.0 | 1.0 | 1.0 | 8,821ms | 608ms |
+| Recommended | 10 | 768 | 4 | 1.0 | 1.0 | 1.0 | 5,052ms | 258ms |
+| **Max speed** | **5** | **512** | **5** | **1.0** | **1.0** | **1.0** | **4,758ms** | **160ms** |
+
+세 설정의 검색 정확도가 동일하므로 `5개 / 512 / batch 5`를 선택했다. 워밍 상태 평균 시간은 Baseline보다 약 73.6% 감소했다. 모델 최초 로딩에 필요한 Cold 시간은 FastAPI 시작 시 리랭커를 미리 워밍업하여 첫 사용자 요청에서 제외한다.
+
+```env
+RAG_RERANK_CANDIDATE_K=5
+RAG_RERANK_MAX_LENGTH=512
+RAG_RERANK_BATCH_SIZE=5
+RAG_RERANK_PRELOAD=true
+```
+
+전체 45문항에서는 Hybrid의 Hit@5와 Recall@5가 더 높았기 때문에 모든 질문에 리랭킹하지 않는다. 정의형 질문에만 조건부 리랭킹을 적용해 제2조 정의의 순위를 높이고, 일반 질문은 Hybrid 결과를 그대로 사용한다.
+
 ## 9. 답변 품질 및 Abstention 평가
 
 `backend/eval/evaluate_quality.py`는 다음 두 평가를 한 번에 수행한다.
