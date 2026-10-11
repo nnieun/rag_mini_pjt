@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { askLaw } from "./api";
 import type { AskResponse, LawSource } from "./api";
@@ -35,11 +35,24 @@ function sourceLocation(source: LawSource) {
 
 const exampleQuestions = ["고영향 인공지능이란 무엇인가요?", "인공지능사업자의 의무 관련 조문을 정리해줘", "투명성 관련 조문을 찾아줘"];
 
+type ConversationTurn = {
+  question: string;
+  result: AskResponse;
+};
+
+type CompletionNotification = {
+  question: string;
+  result: AskResponse;
+  previousTurns: ConversationTurn[];
+};
+
 export default function App() {
   const [screen, setScreen] = useState<"empty" | "answer">("empty");
   const [question, setQuestion] = useState("");
   const [submittedQuestion, setSubmittedQuestion] = useState("");
+  const [conversationRoot, setConversationRoot] = useState("");
   const [result, setResult] = useState<AskResponse | null>(null);
+  const [previousTurns, setPreviousTurns] = useState<ConversationTurn[]>([]);
   const [resultCache, setResultCache] = useState<Record<string, AskResponse>>({});
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
   const [selectedCitation, setSelectedCitation] = useState("");
@@ -51,31 +64,91 @@ export default function App() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | "all" | null>(null);
+  const [completionNotification, setCompletionNotification] = useState<CompletionNotification | null>(null);
+  const [showAllSources, setShowAllSources] = useState(false);
+  const viewVersion = useRef(0);
 
-  const runQuestion = async (rawQuestion: string, refresh = false) => {
+  const runQuestion = async (rawQuestion: string, refresh = false, followUp = false) => {
     const normalized = rawQuestion.trim();
     if (normalized.length < 2 || loading) return;
-    const cachedResult = refresh ? undefined : resultCache[normalized];
-    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setError(""); setEvidenceOpen(true); setMobileNavOpen(false);
+    const requestViewVersion = viewVersion.current;
+    const completedPreviousTurns = followUp && result && !refresh
+      ? [...previousTurns, { question: submittedQuestion, result }]
+      : previousTurns;
+    const priorQuestions = [
+      ...previousTurns.map((turn) => turn.question),
+      ...(submittedQuestion ? [submittedQuestion] : []),
+    ];
+    const contextSummary = priorQuestions
+      .slice(-3)
+      .map((item) => item.slice(0, 180))
+      .join(" → ");
+    const apiQuestion = followUp && contextSummary
+      ? `이전 대화의 질문: ${contextSummary}\n후속 질문: ${normalized.slice(0, 350)}`
+      : normalized;
+    const cacheKey = apiQuestion;
+    const cachedResult = refresh ? undefined : resultCache[cacheKey];
+
+    if (followUp && result && !refresh) {
+      setPreviousTurns((current) => [
+        ...current,
+        { question: submittedQuestion, result },
+      ]);
+    } else if (!followUp && !refresh) {
+      setPreviousTurns([]);
+      setConversationRoot(normalized);
+    }
+
+    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setError(""); setEvidenceOpen(true); setShowAllSources(false); setMobileNavOpen(false);
     if (cachedResult) {
       setResult(cachedResult);
       setSelectedCitation(cachedResult.sources[0]?.source_id ?? "");
+      setEvidenceOpen(cachedResult.sources.length > 0);
       return;
     }
     setResult(null); setLoading(true);
     try {
-      const response = await askLaw(normalized, refresh);
+      const response = await askLaw(apiQuestion, refresh);
+      setResultCache((current) => ({ ...current, [cacheKey]: response }));
+      if (!followUp) {
+        setRecentQuestions((current) => [normalized, ...current.filter((item) => item !== normalized)].slice(0, 5));
+      }
+      if (viewVersion.current !== requestViewVersion) {
+        setCompletionNotification({
+          question: normalized,
+          result: response,
+          previousTurns: completedPreviousTurns,
+        });
+        return;
+      }
       setResult(response); setSelectedCitation(response.sources[0]?.source_id ?? "");
-      setResultCache((current) => ({ ...current, [normalized]: response }));
-      setRecentQuestions((current) => [normalized, ...current.filter((item) => item !== normalized)].slice(0, 5));
+      setEvidenceOpen(response.sources.length > 0);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "백엔드 연결에 실패했습니다.");
     } finally { setLoading(false); }
   };
 
-  const submitQuestion = (event: FormEvent) => { event.preventDefault(); void runQuestion(question); };
+  const submitQuestion = (event: FormEvent) => { event.preventDefault(); void runQuestion(question, false, screen === "answer"); };
   const selectCitation = (sourceId: string) => { setSelectedCitation(sourceId); setEvidenceOpen(true); };
-  const startNewQuestion = () => { setScreen("empty"); setQuestion(""); setResult(null); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); };
+  const startNewQuestion = () => { viewVersion.current += 1; setScreen("empty"); setQuestion(""); setSubmittedQuestion(""); setConversationRoot(""); setResult(null); setPreviousTurns([]); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); setShowAllSources(false); };
+  const openCompletedAnswer = () => {
+    if (!completionNotification) return;
+    viewVersion.current += 1;
+    setScreen("answer");
+    setSubmittedQuestion(completionNotification.question);
+    setConversationRoot(
+      completionNotification.previousTurns[0]?.question
+      ?? completionNotification.question,
+    );
+    setPreviousTurns(completionNotification.previousTurns);
+    setResult(completionNotification.result);
+    setSelectedCitation(
+      completionNotification.result.sources[0]?.source_id ?? "",
+    );
+    setEvidenceOpen(completionNotification.result.sources.length > 0);
+    setShowAllSources(false);
+    setCompletionNotification(null);
+  };
   const deleteRecentQuestion = (item: string) => {
     setRecentQuestions((current) => current.filter((question) => question !== item));
     setResultCache((current) => {
@@ -83,7 +156,7 @@ export default function App() {
       delete next[item];
       return next;
     });
-    if (submittedQuestion === item) startNewQuestion();
+    if (conversationRoot === item) startNewQuestion();
   };
   const clearRecentQuestions = () => {
     setRecentQuestions([]);
@@ -97,14 +170,22 @@ export default function App() {
   };
   const copyAnswer = async () => { if (!result) return; await navigator.clipboard.writeText(result.answer); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
 
+  const initialSourceCount = result?.displayed_count || 5;
+  const visibleSources = result
+    ? (showAllSources ? result.sources : result.sources.slice(0, initialSourceCount))
+    : [];
+  const remainingSourceCount = result
+    ? Math.max(0, result.sources.length - visibleSources.length)
+    : 0;
+
   return <main className="app-shell">
-    <header className="topbar"><div className="brand-block"><button className="mobile-icon-button" aria-label="메뉴 열기" onClick={() => setMobileNavOpen(true)}><Icon name="menu" size={20} /></button><div className="brand-mark"><Icon name="book" size={19} /></div><strong className="brand-name">법령리서치 AI</strong><span className="beta-label">BETA</span></div><div className="source-meta"><span><b>검색 대상</b> AI 기본법 본문</span><i /><span><b>법령 시행일</b> 2026. 7. 21.</span></div></header>
-    <div className={`workspace ${screen === "empty" ? "empty-workspace" : ""}`}>
+    <header className="topbar"><div className="brand-block"><button className="mobile-icon-button" aria-label="메뉴 열기" onClick={() => setMobileNavOpen(true)}><Icon name="menu" size={20} /></button><div className="brand-mark"><Icon name="book" size={19} /></div><strong className="brand-name">법령리서치 AI</strong></div><div className="source-meta"><span><b>검색 대상</b> AI 기본법 본문</span><i /><span><b>법령 시행일</b> 2026. 7. 21.</span></div></header>
+    <div className={`workspace ${screen === "empty" ? "empty-workspace" : ""} ${screen === "answer" && result?.sources.length === 0 ? "without-evidence" : ""}`}>
       <aside className={`sidebar ${mobileNavOpen ? "mobile-nav-open" : ""}`}>
         <div className="mobile-sidebar-head"><strong>법령리서치 AI</strong><button aria-label="메뉴 닫기" onClick={() => setMobileNavOpen(false)}><Icon name="close" /></button></div>
         <button className="new-question" onClick={startNewQuestion}><Icon name="plus" />새 질문</button>
         <nav className="primary-nav"><button className="nav-item active"><Icon name="message" />질문 기록</button></nav>
-        <div className="recent-section"><div className="recent-section-head"><div className="section-label">최근 질문</div>{recentQuestions.length > 0 && <button onClick={() => setDeleteTarget("all")}>전체 삭제</button>}</div>{recentQuestions.length === 0 && <p className="recent-empty">아직 질문 기록이 없습니다.</p>}{recentQuestions.map((item) => <div className={`recent-item-row ${submittedQuestion === item ? "selected" : ""}`} key={item}><button className="recent-item" onClick={() => void runQuestion(item)}><span>{item}</span><small>이 세션</small></button><button className="recent-delete" aria-label={`${item} 삭제`} title="질문 기록 삭제" onClick={() => setDeleteTarget(item)}><Icon name="close" size={14} /></button></div>)}</div>
+        <div className="recent-section"><div className="recent-section-head"><div className="section-label">최근 질문</div>{recentQuestions.length > 0 && <button onClick={() => setDeleteTarget("all")}>전체 삭제</button>}</div>{recentQuestions.length === 0 && <p className="recent-empty">아직 질문 기록이 없습니다.</p>}{recentQuestions.map((item) => <div className={`recent-item-row ${conversationRoot === item ? "selected" : ""}`} key={item}><button className="recent-item" onClick={() => void runQuestion(item)}><span>{item}</span><small>이 세션</small></button><button className="recent-delete" aria-label={`${item} 삭제`} title="질문 기록 삭제" onClick={() => setDeleteTarget(item)}><Icon name="close" size={14} /></button></div>)}</div>
         <div className="sidebar-status"><div><span className={`status-dot ${error ? "status-error" : ""}`} />{error ? "백엔드 연결 확인 필요" : "법령 데이터 연결"}</div><p>대한민국 국가법령정보센터<br />법령 원문 기준</p></div>
       </aside>
       {mobileNavOpen && <button className="scrim" aria-label="메뉴 닫기" onClick={() => setMobileNavOpen(false)} />}
@@ -115,19 +196,32 @@ export default function App() {
           <div className="example-section"><div className="example-label">이런 질문을 해보세요</div><div className="example-list">{exampleQuestions.map((example, index) => <button key={example} onClick={() => void runQuestion(example)}><span>{String(index + 1).padStart(2, "0")}</span><strong>{example}</strong><Icon name="arrow" size={16} /></button>)}</div></div>
           <div className="empty-source-card"><div className="empty-source-title"><Icon name="archive" size={17} /><div><strong>현재 검색 범위</strong><span>답변 생성에 사용하는 법령 데이터</span></div></div><div className="empty-source-grid"><div><span>검색 대상</span><strong>AI 기본법 본문</strong></div><div><span>법령 시행일</span><strong>2026. 7. 21.</strong></div><div><span>검색 방식</span><strong>Hybrid RAG</strong></div></div><p><Icon name="file" size={13} />검색된 법령 원문만 근거로 답변합니다.</p></div>
         </div> : <div className="conversation-inner">
+          {previousTurns.map((turn, turnIndex) => <div className="conversation-turn" key={`${turnIndex}-${turn.question}`}>
+            <div className="question-header"><div><span className="eyebrow">질문</span><h1>{turn.question}</h1></div></div>
+            <article className="answer-card"><div className="answer-heading"><div className="ai-mark"><Icon name="sparkle" size={18} /></div><div><span>AI 답변</span><small>{turn.result.sources.length > 0 ? `조문 근거 ${turn.result.sources.length}개를 확인했습니다` : "AI 기본법 근거에서 답을 확인하지 못했습니다"}</small></div></div><div className="answer-content"><h2>근거 기반 답변</h2><AnswerBody text={turn.result.answer} selected="" onCitation={() => undefined} /><div className="answer-note"><strong>안내</strong><p>검색된 AI 기본법 원문 기반 답변이며 법률 자문을 대신하지 않습니다.</p></div></div></article>
+          </div>)}
           <div className="question-header"><div><span className="eyebrow">질문</span><h1>{submittedQuestion}</h1></div></div>
-          <article className="answer-card"><div className="answer-heading"><div className="ai-mark"><Icon name="sparkle" size={18} /></div><div><span>AI 답변</span><small>{loading ? "관련 법령을 검색하고 있습니다" : result ? `조문 근거 ${result.sources.length}개를 확인했습니다` : "답변을 생성하지 못했습니다"}</small></div></div><div className="answer-content">
+          <article className="answer-card"><div className="answer-heading"><div className="ai-mark"><Icon name="sparkle" size={18} /></div><div><span>AI 답변</span><small>{loading ? "관련 법령을 검색하고 있습니다" : result ? (result.sources.length > 0 ? `조문 근거 ${result.sources.length}개를 확인했습니다` : "AI 기본법 근거에서 답을 확인하지 못했습니다") : "답변을 생성하지 못했습니다"}</small></div></div><div className="answer-content">
             {loading && <div className="loading-state"><span className="loading-spinner" />근거를 검색하고 답변을 작성하는 중입니다…</div>}
-            {error && <div className="error-state"><strong>연결 오류</strong><p>{error}</p><button onClick={() => void runQuestion(submittedQuestion)}>다시 시도</button></div>}
+            {error && <div className="error-state"><strong>연결 오류</strong><p>{error}</p><button onClick={() => void runQuestion(submittedQuestion, false, previousTurns.length > 0)}>다시 시도</button></div>}
             {result && <><h2>근거 기반 답변</h2><AnswerBody text={result.answer} selected={selectedCitation} onCitation={selectCitation} /><div className="answer-note"><strong>안내</strong><p>검색된 AI 기본법 원문 기반 답변이며 법률 자문을 대신하지 않습니다.</p></div></>}
-          </div>{result && <div className="answer-footer"><div><button onClick={() => void copyAnswer()}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "복사됨" : "답변 복사"}</button><button onClick={() => void runQuestion(submittedQuestion, true)}><Icon name="search" size={15} />다시 검색</button></div><span>{result.method}{result.cache_hit ? " · PostgreSQL Cache" : ""}</span></div>}</article>
-          {result && <div className="process-panel"><button className="process-trigger" onClick={() => setProcessOpen(!processOpen)}><span><Icon name="check" size={16} />검색 과정 보기</span><span className="process-summary">검색 조문 {result.retrieved_articles.length}개 · 근거 {result.sources.length}개 · {result.cache_hit ? `기존 검색 ${(result.processing_ms / 1000).toFixed(1)}초 · 캐시 조회 ${(result.elapsed_ms / 1000).toFixed(1)}초` : `${(result.elapsed_ms / 1000).toFixed(1)}초`}</span><Icon name="chevron" size={16} /></button>{processOpen && <div className="process-detail"><div><span>1</span><p><b>Hybrid 검색</b><small>Dense와 BM25 결과를 RRF로 결합</small></p></div>{result.method.includes("Reranking") && <div><span>2</span><p><b>정의형 조건부 리랭킹</b><small>정의 질문의 후보 조문을 Qwen으로 재정렬</small></p></div>}<div><span>{result.method.includes("Reranking") ? 3 : 2}</span><p><b>부모 조문 확장</b><small>검색 청크를 전체 조문 근거로 연결</small></p></div><div><span>{result.method.includes("Reranking") ? 4 : 3}</span><p><b>근거 기반 답변</b><small>근거에 없는 내용은 추측하지 않음</small></p></div></div>}</div>}
+          </div>{result && <div className="answer-footer"><div><button onClick={() => void copyAnswer()}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "복사됨" : "답변 복사"}</button><button onClick={() => void runQuestion(submittedQuestion, true, previousTurns.length > 0)}><Icon name="search" size={15} />다시 검색</button></div><span>{result.method}{result.cache_hit ? " · PostgreSQL Cache" : ""}</span></div>}</article>
+          {result && <div className="process-panel"><button className="process-trigger" onClick={() => setProcessOpen(!processOpen)}><span><Icon name="check" size={16} />검색 과정 보기</span><span className="process-summary">검색 조문 {result.retrieved_articles.length}개 · {result.sources.length > 0 ? `근거 ${result.sources.length}개` : "답변 근거 없음"} · {result.cache_hit ? `기존 검색 ${(result.processing_ms / 1000).toFixed(1)}초 · 캐시 조회 ${(result.elapsed_ms / 1000).toFixed(1)}초` : `${(result.elapsed_ms / 1000).toFixed(1)}초`}</span><Icon name="chevron" size={16} /></button>{processOpen && <div className="process-detail"><div><span>1</span><p><b>Hybrid 검색</b><small>Dense와 BM25 결과를 RRF로 결합</small></p></div>{result.method.includes("Reranking") && <div><span>2</span><p><b>정의형 조건부 리랭킹</b><small>정의 질문의 후보 조문을 Qwen으로 재정렬</small></p></div>}<div><span>{result.method.includes("Reranking") ? 3 : 2}</span><p><b>부모 조문 확장</b><small>검색 청크를 전체 조문 근거로 연결</small></p></div><div><span>{result.method.includes("Reranking") ? 4 : 3}</span><p><b>근거 기반 답변</b><small>근거에 없는 내용은 추측하지 않음</small></p></div></div>}</div>}
         </div>}
         {screen === "answer" && <form className="composer-wrap" onSubmit={submitQuestion}><div className="composer"><input aria-label="후속 질문" disabled={loading} onChange={(event) => setQuestion(event.target.value)} placeholder="후속 질문을 입력하세요" value={question} /><button aria-label="질문 보내기" className="send-button" disabled={loading} type="submit"><Icon name="send" size={17} /></button><span>AI 기본법 본문에서 근거를 찾아 답합니다</span></div></form>}
       </section>
-      {screen === "answer" && result && !evidenceOpen && <button className="evidence-restore" onClick={() => setEvidenceOpen(true)}><Icon name="file" size={17} />근거 조문 <span>{result.sources.length}</span></button>}
-      {screen === "answer" && result && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>답변에 사용된 근거 {result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.sources.length}</span></button></div><div className="evidence-scroll">{result.sources.map((source, index) => <article className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
+      {screen === "answer" && result && result.sources.length > 0 && !evidenceOpen && <button className="evidence-restore" onClick={() => setEvidenceOpen(true)}><Icon name="file" size={17} />근거 조문 <span>{result.sources.length}</span></button>}
+      {screen === "answer" && result && result.sources.length > 0 && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>현재 검색에서 관련 근거 {result.total_relevant || result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.total_relevant || result.sources.length}</span></button></div><div className="evidence-scroll">{visibleSources.map((source, index) => <article className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}{remainingSourceCount > 0 && <button className="more-sources-button" onClick={() => setShowAllSources(true)}>나머지 {remainingSourceCount}개 조문 보기 <Icon name="chevron" size={15} /></button>}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
     </div>
+    {completionNotification && (
+      <div className="completion-toast" role="status">
+        <button className="completion-toast-body" onClick={openCompletedAnswer}>
+          <span className="completion-toast-icon"><Icon name="check" size={16} /></span>
+          <span><strong>답변이 완료되었습니다</strong><small>{completionNotification.question}</small></span>
+        </button>
+        <button className="completion-toast-close" aria-label="알림 닫기" onClick={() => setCompletionNotification(null)}><Icon name="close" size={14} /></button>
+      </div>
+    )}
     {deleteTarget && (
       <div
         className="confirm-overlay"

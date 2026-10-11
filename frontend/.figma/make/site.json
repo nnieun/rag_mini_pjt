@@ -1,4 +1,5 @@
 {
+  "title": "법령 검색 서비스",
   "description": "Efficiently research legal regulations by asking questions and receiving answers alongside relevant citations and full context, tailored for AI service professionals.",
   "robots": {
     "index": false

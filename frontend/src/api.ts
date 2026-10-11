@@ -16,6 +16,9 @@ export type AskResponse = {
   elapsed_ms: number;
   cache_hit: boolean;
   processing_ms: number;
+  total_relevant: number;
+  displayed_count: number;
+  has_more: boolean;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
