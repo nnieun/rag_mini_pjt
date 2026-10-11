@@ -968,7 +968,7 @@ backend/eval/results/definition_strategy_detail.csv
 ```dotenv
 RAG_ANSWER_CACHE_ENABLED=true
 RAG_CACHE_TTL_DAYS=30
-RAG_CACHE_VERSION=conditional-rerank-v1
+RAG_CACHE_VERSION=conditional-rerank-v3
 ```
 
 법령 원문, 청킹 방식, 프롬프트 또는 검색 전략을 바꾸면 `RAG_CACHE_VERSION`을 올려 이전 캐시를 무효화한다. 캐시가 적중하면 API 응답의 `cache_hit`이 `true`가 되고, 검색·리랭킹·LLM 호출을 모두 생략한다.
@@ -978,3 +978,41 @@ PostgreSQL이 잠시 꺼져 있거나 인증에 실패하더라도 QA API 전체
 캐시를 붙인 뒤 검색 로직을 수정했는데도 예전 답변이 계속 보이는 문제도 생겼다. 이를 해결하기 위해 검색 전략 변경 시 캐시 버전을 올리고, API 요청의 `refresh=true`와 화면의 `다시 검색` 버튼을 추가했다. `다시 검색`을 누르면 브라우저 캐시와 PostgreSQL 조회를 모두 건너뛰어 새로 검색하고, 새 답변으로 기존 캐시를 덮어쓴다.
 
 캐시 응답은 빠르기 때문에 화면의 실행 시간이 `0.0초`로 바뀌면서 원래 검색에 얼마나 걸렸는지 알 수 없는 문제도 있었다. 현재 요청 시간인 `elapsed_ms`와 최초 답변 생성 시간인 `processing_ms`를 따로 저장하도록 바꿨다. 캐시에서 불러온 답변은 `기존 검색 4.9초 · 캐시 조회 0.0초`처럼 두 시간을 함께 표시한다.
+
+## 33. 캐시를 지웠는데도 제2조가 S1으로 나오지 않은 문제
+
+`고영향 인공지능이란 무엇인가요?`의 오래된 캐시를 삭제하고 `다시 검색`까지 눌렀는데도 제33조가 S1, 제2조가 S2로 나왔다. 처음에는 캐시가 또 남아 있다고 생각했지만, `refresh=true`로 API를 직접 호출해 보니 `cache_hit=false`인데도 결과가 같았다.
+
+실제 응답의 검색 방식을 확인하자 원인이 보였다.
+
+```text
+기대: Hybrid(Dense+BM25+RRF)+Reranking
+실제: Hybrid(Dense+BM25+RRF)
+```
+
+캐시는 정상적으로 건너뛰고 있었지만 리랭킹 자체가 실행되지 않은 것이다. `.env`를 확인해 보니 조건부 리랭킹 설정이 꺼져 있었다.
+
+```dotenv
+RAG_CONDITIONAL_RERANK=false
+```
+
+이 값을 `true`로 바꾼 뒤 새 파이프라인을 만들어 같은 질문을 다시 확인했다.
+
+```text
+conditional_reranking_enabled: True
+should_rerank: True
+first_article: 제2조
+first_title: 정의
+```
+
+테스트 과정에서 리랭킹이 꺼진 서버가 잘못된 순서의 답변을 PostgreSQL에 다시 저장했기 때문에 해당 질문의 캐시도 한 번 더 삭제했다. 마지막으로 실행 중인 백엔드를 완전히 종료하고 다시 시작해 변경된 `.env`가 메모리에 반영되도록 했다.
+
+이번 문제를 통해 캐시 여부만 확인해서는 부족하다는 점을 알게 됐다. 검색 결과가 예상과 다르면 API 응답에서 다음 세 값을 같이 확인해야 한다.
+
+```text
+cache_hit
+method
+retrieved_articles
+```
+
+`cache_hit=false`라면 새 검색이 실행된 것이고, `method`에 `+Reranking`이 없다면 조건부 리랭킹 설정이나 정의형 판별부터 확인해야 한다. `.env`를 바꾼 뒤에는 서버 재시작도 필요하다.
