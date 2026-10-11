@@ -40,6 +40,7 @@ export default function App() {
   const [question, setQuestion] = useState("");
   const [submittedQuestion, setSubmittedQuestion] = useState("");
   const [result, setResult] = useState<AskResponse | null>(null);
+  const [resultCache, setResultCache] = useState<Record<string, AskResponse>>({});
   const [recentQuestions, setRecentQuestions] = useState<string[]>([]);
   const [selectedCitation, setSelectedCitation] = useState("");
   const [articleOpen, setArticleOpen] = useState("");
@@ -49,14 +50,23 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | "all" | null>(null);
 
-  const runQuestion = async (rawQuestion: string) => {
+  const runQuestion = async (rawQuestion: string, refresh = false) => {
     const normalized = rawQuestion.trim();
     if (normalized.length < 2 || loading) return;
-    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setResult(null); setError(""); setLoading(true); setEvidenceOpen(true); setMobileNavOpen(false);
+    const cachedResult = refresh ? undefined : resultCache[normalized];
+    setScreen("answer"); setSubmittedQuestion(normalized); setQuestion(""); setError(""); setEvidenceOpen(true); setMobileNavOpen(false);
+    if (cachedResult) {
+      setResult(cachedResult);
+      setSelectedCitation(cachedResult.sources[0]?.source_id ?? "");
+      return;
+    }
+    setResult(null); setLoading(true);
     try {
-      const response = await askLaw(normalized);
+      const response = await askLaw(normalized, refresh);
       setResult(response); setSelectedCitation(response.sources[0]?.source_id ?? "");
+      setResultCache((current) => ({ ...current, [normalized]: response }));
       setRecentQuestions((current) => [normalized, ...current.filter((item) => item !== normalized)].slice(0, 5));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "백엔드 연결에 실패했습니다.");
@@ -66,6 +76,25 @@ export default function App() {
   const submitQuestion = (event: FormEvent) => { event.preventDefault(); void runQuestion(question); };
   const selectCitation = (sourceId: string) => { setSelectedCitation(sourceId); setEvidenceOpen(true); };
   const startNewQuestion = () => { setScreen("empty"); setQuestion(""); setResult(null); setError(""); setMobileNavOpen(false); setEvidenceOpen(false); };
+  const deleteRecentQuestion = (item: string) => {
+    setRecentQuestions((current) => current.filter((question) => question !== item));
+    setResultCache((current) => {
+      const next = { ...current };
+      delete next[item];
+      return next;
+    });
+    if (submittedQuestion === item) startNewQuestion();
+  };
+  const clearRecentQuestions = () => {
+    setRecentQuestions([]);
+    setResultCache({});
+    startNewQuestion();
+  };
+  const confirmDelete = () => {
+    if (deleteTarget === "all") clearRecentQuestions();
+    else if (deleteTarget) deleteRecentQuestion(deleteTarget);
+    setDeleteTarget(null);
+  };
   const copyAnswer = async () => { if (!result) return; await navigator.clipboard.writeText(result.answer); setCopied(true); window.setTimeout(() => setCopied(false), 1400); };
 
   return <main className="app-shell">
@@ -75,7 +104,7 @@ export default function App() {
         <div className="mobile-sidebar-head"><strong>법령리서치 AI</strong><button aria-label="메뉴 닫기" onClick={() => setMobileNavOpen(false)}><Icon name="close" /></button></div>
         <button className="new-question" onClick={startNewQuestion}><Icon name="plus" />새 질문</button>
         <nav className="primary-nav"><button className="nav-item active"><Icon name="message" />질문 기록</button></nav>
-        <div className="recent-section"><div className="section-label">최근 질문</div>{recentQuestions.length === 0 && <p className="recent-empty">아직 질문 기록이 없습니다.</p>}{recentQuestions.map((item) => <button className={`recent-item ${submittedQuestion === item ? "selected" : ""}`} key={item} onClick={() => void runQuestion(item)}><span>{item}</span><small>이 세션</small></button>)}</div>
+        <div className="recent-section"><div className="recent-section-head"><div className="section-label">최근 질문</div>{recentQuestions.length > 0 && <button onClick={() => setDeleteTarget("all")}>전체 삭제</button>}</div>{recentQuestions.length === 0 && <p className="recent-empty">아직 질문 기록이 없습니다.</p>}{recentQuestions.map((item) => <div className={`recent-item-row ${submittedQuestion === item ? "selected" : ""}`} key={item}><button className="recent-item" onClick={() => void runQuestion(item)}><span>{item}</span><small>이 세션</small></button><button className="recent-delete" aria-label={`${item} 삭제`} title="질문 기록 삭제" onClick={() => setDeleteTarget(item)}><Icon name="close" size={14} /></button></div>)}</div>
         <div className="sidebar-status"><div><span className={`status-dot ${error ? "status-error" : ""}`} />{error ? "백엔드 연결 확인 필요" : "법령 데이터 연결"}</div><p>대한민국 국가법령정보센터<br />법령 원문 기준</p></div>
       </aside>
       {mobileNavOpen && <button className="scrim" aria-label="메뉴 닫기" onClick={() => setMobileNavOpen(false)} />}
@@ -91,13 +120,70 @@ export default function App() {
             {loading && <div className="loading-state"><span className="loading-spinner" />근거를 검색하고 답변을 작성하는 중입니다…</div>}
             {error && <div className="error-state"><strong>연결 오류</strong><p>{error}</p><button onClick={() => void runQuestion(submittedQuestion)}>다시 시도</button></div>}
             {result && <><h2>근거 기반 답변</h2><AnswerBody text={result.answer} selected={selectedCitation} onCitation={selectCitation} /><div className="answer-note"><strong>안내</strong><p>검색된 AI 기본법 원문 기반 답변이며 법률 자문을 대신하지 않습니다.</p></div></>}
-          </div>{result && <div className="answer-footer"><button onClick={() => void copyAnswer()}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "복사됨" : "답변 복사"}</button><span>{result.method}</span></div>}</article>
-          {result && <div className="process-panel"><button className="process-trigger" onClick={() => setProcessOpen(!processOpen)}><span><Icon name="check" size={16} />검색 과정 보기</span><span className="process-summary">검색 조문 {result.retrieved_articles.length}개 · 근거 {result.sources.length}개 · {(result.elapsed_ms / 1000).toFixed(1)}초</span><Icon name="chevron" size={16} /></button>{processOpen && <div className="process-detail"><div><span>1</span><p><b>Hybrid 검색</b><small>Dense와 BM25 결과를 RRF로 결합</small></p></div><div><span>2</span><p><b>부모 조문 확장</b><small>검색 청크를 전체 조문 근거로 연결</small></p></div><div><span>3</span><p><b>근거 기반 답변</b><small>근거에 없는 내용은 추측하지 않음</small></p></div></div>}</div>}
+          </div>{result && <div className="answer-footer"><div><button onClick={() => void copyAnswer()}><Icon name={copied ? "check" : "copy"} size={16} />{copied ? "복사됨" : "답변 복사"}</button><button onClick={() => void runQuestion(submittedQuestion, true)}><Icon name="search" size={15} />다시 검색</button></div><span>{result.method}{result.cache_hit ? " · PostgreSQL Cache" : ""}</span></div>}</article>
+          {result && <div className="process-panel"><button className="process-trigger" onClick={() => setProcessOpen(!processOpen)}><span><Icon name="check" size={16} />검색 과정 보기</span><span className="process-summary">검색 조문 {result.retrieved_articles.length}개 · 근거 {result.sources.length}개 · {result.cache_hit ? `기존 검색 ${(result.processing_ms / 1000).toFixed(1)}초 · 캐시 조회 ${(result.elapsed_ms / 1000).toFixed(1)}초` : `${(result.elapsed_ms / 1000).toFixed(1)}초`}</span><Icon name="chevron" size={16} /></button>{processOpen && <div className="process-detail"><div><span>1</span><p><b>Hybrid 검색</b><small>Dense와 BM25 결과를 RRF로 결합</small></p></div>{result.method.includes("Reranking") && <div><span>2</span><p><b>정의형 조건부 리랭킹</b><small>정의 질문의 후보 조문을 Qwen으로 재정렬</small></p></div>}<div><span>{result.method.includes("Reranking") ? 3 : 2}</span><p><b>부모 조문 확장</b><small>검색 청크를 전체 조문 근거로 연결</small></p></div><div><span>{result.method.includes("Reranking") ? 4 : 3}</span><p><b>근거 기반 답변</b><small>근거에 없는 내용은 추측하지 않음</small></p></div></div>}</div>}
         </div>}
         {screen === "answer" && <form className="composer-wrap" onSubmit={submitQuestion}><div className="composer"><input aria-label="후속 질문" disabled={loading} onChange={(event) => setQuestion(event.target.value)} placeholder="후속 질문을 입력하세요" value={question} /><button aria-label="질문 보내기" className="send-button" disabled={loading} type="submit"><Icon name="send" size={17} /></button><span>AI 기본법 본문에서 근거를 찾아 답합니다</span></div></form>}
       </section>
       {screen === "answer" && result && !evidenceOpen && <button className="evidence-restore" onClick={() => setEvidenceOpen(true)}><Icon name="file" size={17} />근거 조문 <span>{result.sources.length}</span></button>}
       {screen === "answer" && result && <aside className={`evidence-panel ${evidenceOpen ? "evidence-open" : ""}`}><div className="evidence-header"><div><h2>근거 조문</h2><span>답변에 사용된 근거 {result.sources.length}개</span></div><button aria-label="근거 패널 닫기" onClick={() => setEvidenceOpen(false)}><Icon name="collapse" /></button></div><div className="evidence-tabs"><button className="active">인용 근거 <span>{result.sources.length}</span></button></div><div className="evidence-scroll">{result.sources.map((source, index) => <article className={`evidence-card ${selectedCitation === source.source_id ? "selected" : ""}`} key={source.source_id} onClick={() => setSelectedCitation(source.source_id)}><div className="evidence-card-top"><span className="source-number">{index + 1}</span><span className="used-badge"><Icon name="check" size={11} />{source.source_id}</span></div><div className="law-name">인공지능 발전과 신뢰 기반 조성 등에 관한 기본법</div><div className="law-path">{sourceLocation(source)}</div><h3>{source.article}{source.title ? `(${source.title})` : ""}</h3><blockquote>{articleOpen === source.source_id ? source.content : `${source.content.slice(0, 420)}${source.content.length > 420 ? "…" : ""}`}</blockquote>{source.content.length > 420 && <button className="full-article-button" onClick={(event) => { event.stopPropagation(); setArticleOpen(articleOpen === source.source_id ? "" : source.source_id); }}><Icon name="book" size={16} />{articleOpen === source.source_id ? "원문 접기" : "원문 전체 보기"}<Icon name="chevron" size={15} /></button>}<a href="https://www.law.go.kr/법령/인공지능발전과신뢰기반조성등에관한기본법" target="_blank" rel="noreferrer">국가법령정보센터에서 보기 <Icon name="external" size={14} /></a></article>)}<div className="source-notice"><Icon name="clock" size={16} /><p><b>원문 확인 안내</b><span>최신 개정 여부는 국가법령정보센터에서 다시 확인하세요.</span></p></div></div></aside>}
     </div>
+    {deleteTarget && (
+      <div
+        className="confirm-overlay"
+        role="presentation"
+        onMouseDown={() => setDeleteTarget(null)}
+      >
+        <div
+          className="confirm-dialog"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="delete-confirm-title"
+          onMouseDown={(event) => event.stopPropagation()}
+        >
+          <div className="confirm-icon">
+            <Icon name="archive" size={20} />
+          </div>
+
+          <h2 id="delete-confirm-title">
+            {deleteTarget === "all"
+              ? "전체 질문을 삭제할까요?"
+              : "이 질문을 삭제할까요?"}
+          </h2>
+
+          <p>
+            {deleteTarget === "all" ? (
+              <>
+                기존 질문들이 모두 삭제됩니다.
+                <br />
+                삭제하시겠습니까?
+              </>
+            ) : (
+              <>
+                선택한 질문과 저장된 화면 결과가 삭제됩니다.
+                <br />
+                삭제하시겠습니까?
+              </>
+            )}
+          </p>
+
+          <div className="confirm-actions">
+            <button
+              className="confirm-cancel"
+              onClick={() => setDeleteTarget(null)}
+            >
+              아니오
+            </button>
+            <button
+              className="confirm-delete"
+              autoFocus
+              onClick={confirmDelete}
+            >
+              예
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
   </main>;
 }

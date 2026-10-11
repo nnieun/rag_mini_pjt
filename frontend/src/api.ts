@@ -14,15 +14,17 @@ export type AskResponse = {
   method: string;
   retrieved_articles: string[];
   elapsed_ms: number;
+  cache_hit: boolean;
+  processing_ms: number;
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
-export async function askLaw(question: string): Promise<AskResponse> {
+export async function askLaw(question: string, refresh = false): Promise<AskResponse> {
   const response = await fetch(`${API_BASE_URL}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, refresh }),
   });
 
   if (!response.ok) {
