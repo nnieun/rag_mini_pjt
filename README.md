@@ -51,7 +51,8 @@ Retrieval 및 Answer 평가
 | 근거 기반 답변 | 모듈화 및 API 검증 완료 | 답변과 `[S1]` 출처 생성 |
 | Answer 품질 평가 | 완료 | 10문항 LLM Judge + 사람 검토용 CSV |
 | Abstention 평가 | 완료 | 범위 밖 5문항 Accuracy 100% |
-| FastAPI `POST /ask` | 완료 | Hybrid 검색 + 답변 + 출처 반환 |
+| FastAPI `POST /ask` | 완료 | Hybrid 검색, 정의형 조건부 Qwen Reranking, 답변 + 출처 반환 |
+| PostgreSQL 답변 캐시 | 완료 | 동일 질문의 검색·리랭킹·LLM 호출 재사용, 기본 TTL 30일 |
 | 자동 테스트 | 완료 | 청킹·검색·Pipeline·API 13개 통과 |
 
 ## 3. 프로젝트 구조
@@ -447,7 +448,7 @@ uv run uvicorn app.main:app --reload
 backend/app/main.py
 ```
 
-45문항 Retrieval 평가에서 Hit@5와 Recall@5가 가장 높았던 **Hybrid(C)**를 API의 기본 검색 방법으로 사용한다. API에는 Qwen Reranking을 적용하지 않았다.
+API는 기본적으로 **Hybrid(C)**를 사용한다. 다만 정의형 질문으로 판별되면 Hybrid 후보에만 Qwen Reranking을 적용한다. 45문항 비교에서 이 방식은 Hybrid의 Hit@5와 Recall@5를 유지하면서 전체 MRR@5를 `0.7210`에서 `0.7508`로 높였다. `.env`에서 `RAG_CONDITIONAL_RERANK=false`로 끌 수 있다.
 
 ### 14.1 요청 처리 흐름
 
