@@ -68,6 +68,8 @@ class AnswerResult:
     total_relevant: int = 0
     displayed_count: int = 0
     has_more: bool = False
+    model_usage: dict[str, int | None] = field(default_factory=dict)
+    resolved_question: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -80,4 +82,6 @@ class AnswerResult:
             "total_relevant": self.total_relevant,
             "displayed_count": self.displayed_count,
             "has_more": self.has_more,
+            "model_usage": self.model_usage,
+            "resolved_question": self.resolved_question,
         }

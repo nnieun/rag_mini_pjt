@@ -158,6 +158,7 @@ activemq-data/
 .env
 .envrc
 .venv
+backend/generated_reports/*.pdf
 env/
 venv/
 ENV/

@@ -102,6 +102,8 @@ class PostgresAnswerCache:
                 payload.get("displayed_count", len(payload["sources"]))
             ),
             has_more=bool(payload.get("has_more", False)),
+            model_usage=dict(payload.get("model_usage", {})),
+            resolved_question=str(payload.get("resolved_question", "")),
         )
 
     async def put(self, question: str, result: AnswerResult) -> None:

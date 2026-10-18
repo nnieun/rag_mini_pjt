@@ -198,22 +198,27 @@ class RAGPipeline:
         *,
         use_reranking: bool = False,
         bypass_cache: bool = False,
+        retrieved_results: list[dict] | None = None,
+        cache_question: str | None = None,
     ) -> AnswerResult:
         question = question.strip()
+        cache_key_question = (cache_question or question).strip()
         if len(question) < 2:
             raise ValueError("질문은 두 글자 이상이어야 합니다.")
 
         if self.answer_cache is not None and not bypass_cache:
-            cached = await self.answer_cache.get(question)
+            cached = await self.answer_cache.get(cache_key_question)
             if cached is not None:
                 return cached
 
         processing_started = time.perf_counter()
 
-        results = await self.retrieve(
-            question,
-            use_reranking=use_reranking,
-        )
+        results = retrieved_results
+        if results is None:
+            results = await self.retrieve(
+                question,
+                use_reranking=use_reranking,
+            )
         reranking_applied = self.should_rerank(question, use_reranking)
         if not results:
             return AnswerResult(
@@ -265,6 +270,7 @@ class RAGPipeline:
             wait_seconds=self.retry_wait_seconds,
         )
         answer = response.content
+        usage = getattr(response, "usage_metadata", None) or {}
         if not isinstance(answer, str):
             answer = str(answer)
         answerable, answer = extract_answerability(answer)
@@ -297,9 +303,14 @@ class RAGPipeline:
             total_relevant=total_relevant,
             displayed_count=displayed_count,
             has_more=total_relevant > displayed_count,
+            model_usage={
+                "input_tokens": usage.get("input_tokens"),
+                "output_tokens": usage.get("output_tokens"),
+                "total_tokens": usage.get("total_tokens"),
+            },
         )
         if self.answer_cache is not None:
-            await self.answer_cache.put(question, result)
+            await self.answer_cache.put(cache_key_question, result)
         return result
 
     def close(self) -> None:

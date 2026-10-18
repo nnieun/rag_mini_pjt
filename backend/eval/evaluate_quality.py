@@ -135,6 +135,10 @@ async def evaluate_answer_quality(
                 "gold_articles": json.dumps(item["answer_articles"], ensure_ascii=False),
                 "retrieved_articles": json.dumps(result.retrieved_articles, ensure_ascii=False),
                 "sources": json.dumps(source_dicts, ensure_ascii=False),
+                "processing_ms": result.processing_ms,
+                "input_tokens": result.model_usage.get("input_tokens"),
+                "output_tokens": result.model_usage.get("output_tokens"),
+                "total_tokens": result.model_usage.get("total_tokens"),
             }
         )
         print(f"[답변 평가 {index}/{len(items)}] {item['id']} 완료")
@@ -163,6 +167,8 @@ async def evaluate_abstention(
                 "correct": abstained,
                 "answer": result.answer,
                 "retrieved_articles": json.dumps(result.retrieved_articles, ensure_ascii=False),
+                "processing_ms": result.processing_ms,
+                "total_tokens": result.model_usage.get("total_tokens"),
             }
         )
         print(f"[Abstention {index}/{len(items)}] {item['id']} 완료: {abstained}")
@@ -232,6 +238,11 @@ async def main() -> None:
         "hallucination_rate": sum(row["hallucination"] for row in answer_rows) / len(answer_rows),
         "abstention_question_count": len(abstention_rows),
         "abstention_accuracy": sum(row["correct"] for row in abstention_rows) / len(abstention_rows),
+        "average_processing_ms": sum(row["processing_ms"] for row in answer_rows) / len(answer_rows),
+        "average_total_tokens": (
+            sum(row["total_tokens"] for row in answer_rows if row["total_tokens"] is not None)
+            / max(1, sum(row["total_tokens"] is not None for row in answer_rows))
+        ),
         "answer_csv": str(answer_path),
         "abstention_csv": str(abstention_path),
     }

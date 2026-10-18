@@ -24,10 +24,13 @@ class ApiTest(unittest.TestCase):
         routes = {
             (route.path, method)
             for route in app.routes
-            for method in (route.methods or set())
+            for method in (getattr(route, "methods", None) or set())
         }
         self.assertIn(("/health", "GET"), routes)
         self.assertIn(("/ask", "POST"), routes)
+        self.assertIn(("/documents/extract", "POST"), routes)
+        self.assertIn(("/documents/summarize", "POST"), routes)
+        self.assertTrue(any(route.path == "/reports" for route in app.routes))
         self.assertIn(("/docs", "GET"), routes)
 
     def test_openapi_ask_schema(self):
@@ -39,6 +42,8 @@ class ApiTest(unittest.TestCase):
         self.assertIn("retrieved_articles", response_schema["properties"])
         self.assertIn("total_relevant", response_schema["properties"])
         self.assertIn("has_more", response_schema["properties"])
+        self.assertIn("request_id", response_schema["properties"])
+        self.assertIn("model_usage", response_schema["properties"])
 
     def test_question_validation(self):
         with self.assertRaises(ValidationError):
@@ -51,6 +56,18 @@ class ApiTest(unittest.TestCase):
             refresh=True,
         )
         self.assertTrue(refresh_request.refresh)
+        follow_up = AskRequest(
+            question="그게 다야?",
+            thread_id="thread-1",
+            history=[
+                {
+                    "question": "고영향 인공지능이란?",
+                    "answer": "정의 답변",
+                    "source_articles": ["제2조"],
+                }
+            ],
+        )
+        self.assertEqual(follow_up.history[0].source_articles, ["제2조"])
 
     def test_response_serialization(self):
         response = AskResponse(
