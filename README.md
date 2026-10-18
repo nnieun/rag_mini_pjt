@@ -11,7 +11,7 @@
 
 프로젝트 진행 중 발생한 오류, 실패한 접근, 해결 과정은 [시행착오 기록](docs/TRIALS_AND_ERRORS.md)에 정리되어 있다.
 
-확장 API와 문서 입력 방법은 [API 실행 가이드](docs/API_GUIDE.md), 전체 확장 범위는 [LLM 서비스 확장 기획서](docs/LLM_SERVICE_EXPANSION_PROPOSAL.md), 버전별 변경 사항은 [변경 이력](CHANGELOG.md)을 참고한다.
+확장 API와 문서 입력 방법은 [API 실행 가이드](docs/API_GUIDE.md), 전체 확장 범위는 [LLM 서비스 확장 기획서](docs/LLM_SERVICE_EXPANSION_PROPOSAL.md), 버전별 변경 사항은 [변경 이력](CHANGELOG.md)을 참고한다. TypeScript 기반 문서 분류·추출 에이전트는 [agent-api/README.md](agent-api/README.md)에서 다룬다.
 
 ## 서비스 화면
 
@@ -131,6 +131,7 @@ rag_mini_pjt_template/
 │   ├── pyproject.toml
 │   └── uv.lock
 ├── frontend/
+├── agent-api/
 ├── docs/
 └── README.md
 ```
@@ -760,3 +761,27 @@ React 프론트엔드는 다음 기능을 제공한다.
 ## 20. 시행착오 목록
 
 - [TRIALS_AND_ERRORS.md](docs/TRIALS_AND_ERRORS.md)
+
+## 21. TypeScript Agent API (agent-api/)
+
+`backend/`의 Python/LangGraph RAG와 별개로, `agent-api/`에 TypeScript 기반 문서 분류·정보
+추출 에이전트를 구현했다. 서버 프레임워크(Hono/NestJS) 없이 라이브러리/CLI 함수 레벨로
+핵심 로직만 구현했고, Claude와 OpenAI(OpenAI-호환 라우터 포함)를 모두 지원하는 공용
+Provider 인터페이스로 Tool Calling을 연동한다.
+
+구현 범위:
+
+- **구조화 입출력 검증**: Zod 스키마로 분류·추출 결과 검증 (`src/schema.ts`)
+- **Tool Calling**: `lookup_glossary`(용어 조회) 도구를 LLM이 직접 호출하는 루프, 429/5xx
+  재시도 (`src/llm.ts`, `src/retry.ts`)
+- **Provider 추상화**: `LLM_PROVIDER=anthropic|openai` 환경변수로 전환, OpenAI 쪽은
+  `OPENAI_API_KEY` 또는 `LLM_API_KEY`/`LLM_BASE_URL`(OpenAI-호환 게이트웨이) 둘 다 지원
+  (`src/providers/`)
+- **LLM 판정자 vs 사람 채점 대조**: 루브릭 기반으로 상위 모델이 채점하고, 사람이 매긴
+  고정 출력 점수와 일치율·Cohen's kappa를 비교 (`src/judge.ts`, `src/agreement.ts`)
+- **반복 측정 기반 개선 검증**: 비결정적 LLM 출력을 N회 반복 실행해 Wilson 신뢰구간과
+  두 비율 z-검정으로 개선 전/후 차이가 통계적으로 유의한지 확인 (`src/repeated.ts`)
+- **테스트**: Vitest 단위 테스트 37개, LLM 호출은 전부 모킹(실제 네트워크 미호출)
+
+실행 방법과 평가 스크립트(`pnpm eval`, `pnpm eval:judge`, `pnpm eval:repeated`)는
+[agent-api/README.md](agent-api/README.md)를 참고한다.
