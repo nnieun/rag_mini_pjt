@@ -33,20 +33,20 @@ AI 기본법에서 확인할 수 없는 질문에는 일반 지식으로 답을 
 flowchart LR
     user["사용자"] --> frontend["React 법령 검색 UI"]
     frontend -->|"POST /ask"| api["FastAPI"]
-    api --> graph["LangGraph 컴파일 그래프"]
+    api --> lgGraph["LangGraph 컴파일 그래프"]
 
-    graph --> followup["후속 질문 LLM 재작성\n(resolve_follow_up)"]
-    followup --> analyze["LLM 의도 분류 + Tool 선택\n(analyze_and_select_tool)"]
-    analyze --> tool["Tool 실행\nSearchLaw / GetArticle / CreatePdf\n(execute_tool)"]
+    lgGraph --> followup["후속 질문 LLM 재작성<br/>(resolve_follow_up)"]
+    followup --> analyze["LLM 의도 분류 + Tool 선택<br/>(analyze_and_select_tool)"]
+    analyze --> tool["Tool 실행<br/>SearchLaw / GetArticle / CreatePdf<br/>(execute_tool)"]
 
     tool --> route{"근거 충분?"}
-    route -->|"부족, 1회"| rewrite["질의 재작성\n(rewrite_query)"]
+    route -->|"부족, 1회"| rewrite["질의 재작성<br/>(rewrite_query)"]
     rewrite --> tool
-    route -->|"CreatePdf"| artifact["PDF 보고서 생성\n/reports/*.pdf"]
-    route -->|"충분"| generate["근거 기반 답변 생성\n(generate)"]
+    route -->|"CreatePdf"| artifact["PDF 보고서 생성<br/>/reports/*.pdf"]
+    route -->|"충분"| generate["근거 기반 답변 생성<br/>(generate)"]
 
-    generate --> validate{"인용·필수값 검증\n(validate)"}
-    validate -->|"실패, 1회"| retry["재생성 준비\n(prepare_retry)"]
+    generate --> validate{"인용·필수값 검증<br/>(validate)"}
+    validate -->|"실패, 1회"| retry["재생성 준비<br/>(prepare_retry)"]
     retry --> generate
     validate -->|"통과"| cache["PostgreSQL 답변 캐시 저장"]
 
