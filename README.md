@@ -11,6 +11,8 @@
 
 프로젝트 진행 중 발생한 오류, 실패한 접근, 해결 과정은 [시행착오 기록](docs/TRIALS_AND_ERRORS.md)에 정리되어 있다.
 
+확장 API와 문서 입력 방법은 [API 실행 가이드](docs/API_GUIDE.md), 전체 확장 범위는 [LLM 서비스 확장 기획서](docs/LLM_SERVICE_EXPANSION_PROPOSAL.md), 버전별 변경 사항은 [변경 이력](CHANGELOG.md)을 참고한다.
+
 ## 서비스 화면
 
 ### 근거 기반 법령 답변
