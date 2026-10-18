@@ -1,0 +1,10 @@
+{"id": "ex01", "text": "본 비밀유지계약(NDA)은 2026년 1월 1일부터 양 당사자 간에 효력을 가진다.", "fields_to_extract": ["effective_date", "parties"], "expected_category": "contract"}
+{"id": "ex02", "text": "청구서 번호 INV-2026-003, 발행일 2026년 2월 10일, 금액 1,250,000원입니다.", "fields_to_extract": ["invoice_number", "amount"], "expected_category": "invoice"}
+{"id": "ex03", "text": "로그인 후 결제 화면에서 오류가 발생합니다. 빠르게 처리해주세요.", "fields_to_extract": ["issue_summary"], "expected_category": "support_request"}
+{"id": "ex04", "text": "2026년 1분기 매출 분석 보고서: 전년 대비 12% 증가, 주요 원인은 신규 계약 체결.", "fields_to_extract": ["growth_rate"], "expected_category": "report"}
+{"id": "ex05", "text": "서비스수준협약(SLA)에 따라 월 가동률은 99.9% 이상을 유지해야 한다.", "fields_to_extract": ["sla_target"], "expected_category": "contract"}
+{"id": "ex06", "text": "세금계산서 발급 요청합니다. 공급가액 500,000원, 부가세 50,000원.", "fields_to_extract": ["supply_amount", "vat"], "expected_category": "invoice"}
+{"id": "ex07", "text": "배송된 상품이 파손되어 왔습니다. 교환 요청 부탁드립니다.", "fields_to_extract": ["issue_summary"], "expected_category": "support_request"}
+{"id": "ex08", "text": "고객 만족도 조사 결과 요약: 응답자 300명 중 85%가 만족을 표함.", "fields_to_extract": ["satisfaction_rate"], "expected_category": "report"}
+{"id": "ex09", "text": "기본계약(MSA) 제5조에 따라 모든 개별 주문서(PO)는 본 계약의 적용을 받는다.", "fields_to_extract": ["related_terms"], "expected_category": "contract"}
+{"id": "ex10", "text": "오늘 날씨가 맑고 기온은 20도입니다.", "fields_to_extract": ["temperature"], "expected_category": "other"}

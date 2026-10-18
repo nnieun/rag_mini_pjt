@@ -1,0 +1,10 @@
+{"example_id": "ex01", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex02", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex03", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex04", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex05", "scores": {"category_correct": 0, "field_completeness": 1, "groundedness": 1, "reason_quality": 0}}
+{"example_id": "ex06", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex07", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex08", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
+{"example_id": "ex09", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 0, "reason_quality": 1}}
+{"example_id": "ex10", "scores": {"category_correct": 1, "field_completeness": 1, "groundedness": 1, "reason_quality": 1}}
