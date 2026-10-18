@@ -11,7 +11,7 @@
 
 프로젝트 진행 중 발생한 오류, 실패한 접근, 해결 과정은 [시행착오 기록](docs/TRIALS_AND_ERRORS.md)에 정리되어 있다.
 
-확장 API와 문서 입력 방법은 [API 실행 가이드](docs/API_GUIDE.md), 전체 확장 범위는 [LLM 서비스 확장 기획서](docs/LLM_SERVICE_EXPANSION_PROPOSAL.md), 버전별 변경 사항은 [변경 이력](CHANGELOG.md)을 참고한다. TypeScript 기반 문서 분류·추출 에이전트는 [agent-api/README.md](agent-api/README.md)에서 다룬다.
+확장 API와 문서 입력 방법은 [API 실행 가이드](docs/API_GUIDE.md), 전체 확장 범위는 [LLM 서비스 확장 기획서](docs/LLM_SERVICE_EXPANSION_PROPOSAL.md), 버전별 변경 사항은 [변경 이력](CHANGELOG.md)을 참고한다. TypeScript 기반 문서 분류·추출 에이전트는 [agent-api/README.md](agent-api/README.md)에서 다룬다. LangGraph 도입 당시의 계획은 [LangGraph 확장 계획](docs/LANGGRAPH_EXTENSION_PLAN.md), PostgreSQL 전체 스키마 설계는 [PostgreSQL ERD](docs/POSTGRES_ERD.md)를 참고한다(ERD에 정의된 테이블 중 실제로 쓰는 것은 2절 참고).
 
 ## 서비스 화면
 
@@ -114,7 +114,7 @@ Retrieval 및 Answer 평가
 | 문서 업로드 추출·요약 | 완료 | TXT/XML/텍스트 PDF/PNG/JPEG 추출, LLM 요약 + 토큰 사용량 반환 |
 | 이미지 OCR | 완료 | PNG/JPEG는 Tesseract OCR, 스캔 PDF 페이지 변환은 미지원(422) |
 | PDF 보고서 생성 | 완료 | `CreatePdf` Tool Calling으로 이전 답변·출처를 PDF로 저장, `/reports` 다운로드 |
-| 요청·모델 사용량 추적 스키마 | 스키마만 완료 | PostgreSQL 추적 테이블 정의, 애플리케이션 영속 기록·비용 계산은 후속 작업 |
+| PostgreSQL 전체 ERD/사용량 추적 스키마 | 스키마만 완료 | `users`/`chat_sessions`/`rag_runs`/`request_runs`/`model_calls` 등 테이블은 정의돼 있으나, 애플리케이션이 실제로 `INSERT`하는 테이블은 `answer_cache` 하나뿐 |
 | 자동 테스트 | 완료 | 청킹·검색·Pipeline·API·그래프·문서 처리 테스트 통과 |
 | TypeScript Agent API | 완료(별도 서브프로젝트) | `agent-api/` — Claude/OpenAI 공용 Provider, Zod 검증, LLM 판정자-사람 채점 대조, 반복측정 통계 |
 
