@@ -1,10 +1,16 @@
-{"id": "ex01", "text": "본 비밀유지계약(NDA)은 2026년 1월 1일부터 양 당사자 간에 효력을 가진다.", "fields_to_extract": ["effective_date", "parties"], "expected_category": "contract"}
-{"id": "ex02", "text": "청구서 번호 INV-2026-003, 발행일 2026년 2월 10일, 금액 1,250,000원입니다.", "fields_to_extract": ["invoice_number", "amount"], "expected_category": "invoice"}
-{"id": "ex03", "text": "로그인 후 결제 화면에서 오류가 발생합니다. 빠르게 처리해주세요.", "fields_to_extract": ["issue_summary"], "expected_category": "support_request"}
-{"id": "ex04", "text": "2026년 1분기 매출 분석 보고서: 전년 대비 12% 증가, 주요 원인은 신규 계약 체결.", "fields_to_extract": ["growth_rate"], "expected_category": "report"}
-{"id": "ex05", "text": "서비스수준협약(SLA)에 따라 월 가동률은 99.9% 이상을 유지해야 한다.", "fields_to_extract": ["sla_target"], "expected_category": "contract"}
-{"id": "ex06", "text": "세금계산서 발급 요청합니다. 공급가액 500,000원, 부가세 50,000원.", "fields_to_extract": ["supply_amount", "vat"], "expected_category": "invoice"}
-{"id": "ex07", "text": "배송된 상품이 파손되어 왔습니다. 교환 요청 부탁드립니다.", "fields_to_extract": ["issue_summary"], "expected_category": "support_request"}
-{"id": "ex08", "text": "고객 만족도 조사 결과 요약: 응답자 300명 중 85%가 만족을 표함.", "fields_to_extract": ["satisfaction_rate"], "expected_category": "report"}
-{"id": "ex09", "text": "기본계약(MSA) 제5조에 따라 모든 개별 주문서(PO)는 본 계약의 적용을 받는다.", "fields_to_extract": ["related_terms"], "expected_category": "contract"}
-{"id": "ex10", "text": "오늘 날씨가 맑고 기온은 20도입니다.", "fields_to_extract": ["temperature"], "expected_category": "other"}
+{"id": "ex01", "text": "본 비밀유지계약(NDA)은 2026년 1월 1일부터 양 당사자(가나상사, 다라물산) 간에 효력을 가지며, 계약 종료 후 3년간 비밀유지 의무가 지속된다.", "fields_to_extract": ["effective_date", "parties", "duration"], "expected_category": "contract"}
+{"id": "ex02", "text": "청구서 번호 INV-2026-003, 발행일 2026년 2월 10일, 금액 1,250,000원입니다. 결제 기한은 발행일로부터 30일입니다.", "fields_to_extract": ["invoice_number", "amount", "due_date"], "expected_category": "invoice"}
+{"id": "ex03", "text": "로그인 후 결제 화면에서 '오류코드 E402'가 발생합니다. 재현은 항상 가능하며 빠르게 처리해주세요.", "fields_to_extract": ["issue_summary", "error_code"], "expected_category": "support_request"}
+{"id": "ex04", "text": "2026년 1분기 매출 분석 보고서: 전년 대비 12% 증가, 주요 원인은 신규 계약 체결. 담당 부서는 영업전략팀이다.", "fields_to_extract": ["growth_rate", "department"], "expected_category": "report"}
+{"id": "ex05", "text": "서비스수준협약(SLA)에 따라 월 가동률은 99.9% 이상을 유지해야 하며, 위반 시 해당 월 이용료의 10%를 환급한다.", "fields_to_extract": ["sla_target", "penalty"], "expected_category": "contract"}
+{"id": "ex06", "text": "세금계산서 발급 요청합니다. 공급가액 500,000원, 부가세 50,000원. 담당자 연락처는 추후 안내드리겠습니다.", "fields_to_extract": ["supply_amount", "vat", "contact"], "expected_category": "invoice"}
+{"id": "ex07", "text": "배송된 상품이 파손되어 왔습니다. 교환 요청 부탁드립니다. 주문번호는 메일로 따로 전달드릴게요.", "fields_to_extract": ["issue_summary", "order_number"], "expected_category": "support_request"}
+{"id": "ex08", "text": "고객 만족도 조사 결과 요약: 응답자 300명 중 85%가 만족을 표함. 조사 기간은 별도 공지하지 않았다.", "fields_to_extract": ["satisfaction_rate", "survey_period"], "expected_category": "report"}
+{"id": "ex09", "text": "기본계약(MSA) 제5조에 따라 모든 개별 주문서(PO)는 본 계약의 적용을 받으며, 계약 기간은 2026년부터 3년이다.", "fields_to_extract": ["related_terms", "duration"], "expected_category": "contract"}
+{"id": "ex10", "text": "오늘 날씨가 맑고 기온은 20도입니다. 주말에도 비슷한 날씨가 이어질 전망입니다.", "fields_to_extract": ["temperature", "forecast_period"], "expected_category": "other"}
+{"id": "ex11", "text": "구매주문서(PO) 번호 PO-2026-0099, 품목은 노트북 10대이며 단가는 명시되지 않았습니다.", "fields_to_extract": ["po_number", "item", "unit_price"], "expected_category": "invoice"}
+{"id": "ex12", "text": "앱이 자꾸 강제 종료됩니다. 기기 모델이나 OS 버전은 아직 확인하지 못했습니다.", "fields_to_extract": ["issue_summary", "device_model"], "expected_category": "support_request"}
+{"id": "ex13", "text": "하도급계약서 제12조: 수급사업자는 원사업자의 사전 서면 동의 없이 제3자에게 재하도급할 수 없다. 위반 시 제재금은 별도 협의한다.", "fields_to_extract": ["clause_subject", "penalty"], "expected_category": "contract"}
+{"id": "ex14", "text": "2026년 상반기 장애 발생 보고서: 총 장애 3건, 평균 복구 시간 42분. 재발 방지책은 다음 분기에 별도 수립 예정이다.", "fields_to_extract": ["incident_count", "mttr", "prevention_plan"], "expected_category": "report"}
+{"id": "ex15", "text": "회의록입니다. 참석자: 김민수, 이지은. 다음 회의 일정은 추후 공지합니다.", "fields_to_extract": ["attendees", "next_meeting_date"], "expected_category": "other"}
+{"id": "ex16", "text": "용역계약서 제3조(대금지급): 총 용역비는 3,000만원이며, 계약금 30%는 착수 시, 잔금은 준공 후 지급한다. 지체상금률은 명시되어 있지 않다.", "fields_to_extract": ["total_fee", "penalty_rate"], "expected_category": "contract"}

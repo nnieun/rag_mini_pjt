@@ -8,6 +8,7 @@
     "eval": "tsx --env-file-if-exists=../backend/.env --env-file-if-exists=.env eval/run-eval.ts",
     "eval:judge": "tsx --env-file-if-exists=../backend/.env --env-file-if-exists=.env eval/run-judge-eval.ts",
     "eval:repeated": "tsx --env-file-if-exists=../backend/.env --env-file-if-exists=.env eval/run-repeated-eval.ts",
+    "eval:generate": "tsx --env-file-if-exists=../backend/.env --env-file-if-exists=.env eval/generate-outputs.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

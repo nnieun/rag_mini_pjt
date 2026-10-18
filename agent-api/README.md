@@ -69,8 +69,14 @@ pnpm eval:repeated   # 같은 입력을 N회 반복해 개선 전/후 pass율 �
 
 ### 1. 정확도 비교 (`pnpm eval`)
 
-`eval/dataset.jsonl`에 카테고리가 라벨링된 10개 문서가 있다. 규칙 기반 baseline과 LLM
-분류 정확도를 같은 데이터셋에서 비교해 출력한다. API 키가 없으면 baseline만 실행된다.
+`eval/dataset.jsonl`에 카테고리가 라벨링된 16개 문서가 있다. 일부는 요청 필드가 원문에
+실제로 없는 경우를 포함해, `field_completeness` 평가에 음성(0점) 사례가 생기도록 구성했다.
+규칙 기반 baseline과 LLM 분류 정확도를 같은 데이터셋에서 비교해 출력한다. API 키가 없으면
+baseline만 실행된다.
+
+`pnpm eval:generate`는 고정된 `baseline_outputs.jsonl`을 만들 때 쓴다. 매번 같은 데이터셋에
+대해 **실제 LLM 호출로** 출력을 생성해 저장하며, `eval:judge`가 판정하는 대상은 이 파일이지
+가짜로 작성한 출력이 아니다.
 
 ### 2. LLM 판정자 vs 사람 채점 (`pnpm eval:judge`)
 
@@ -107,3 +113,23 @@ LLM은 같은 입력에도 매번 다른 출력을 낼 수 있다(특히 `temper
 세 스크립트 모두 선택된 provider의 API 키가 없으면 안내만 출력하고 종료한다. 통계 로직
 (`src/agreement.ts`, `src/repeated.ts`)은 LLM 호출 없이 합성 데이터로 단위 테스트가
 되어 있다.
+
+### 실측 결과 (2026-10-19, `gpt-4o`)
+
+| 평가 | 결과 |
+|---|---|
+| `pnpm eval` (분류 정확도, n=16) | baseline(키워드) 81.3% / LLM 81.3% |
+| `pnpm eval:judge` — `category_correct` | 일치율 93.8%, kappa 0.82 |
+| `pnpm eval:judge` — `field_completeness` | 일치율 100%, kappa 1.00 |
+| `pnpm eval:judge` — `groundedness` | 일치율 100%, kappa 1.00 |
+| `pnpm eval:judge` — `reason_quality` | 일치율 87.5%, kappa 0.00(2차 검수 점수에 변동이 거의 없어 우연 보정 시 낮게 나옴) |
+| `pnpm eval:repeated` (n=15/그룹) | before 100% → after 86.7%, p=0.143 → **유의하지 않음** |
+
+`eval:judge`의 "사람 채점"(`eval/human_scores.jsonl`)은 이 실행에서는 별도의 독립 검수자가
+아니라 Claude가 루브릭 기준으로 16개 출력을 직접 대조 검토해 작성했다. 시스템 자체는 실제
+사람이 채점한 값을 넣어도 동일하게 동작하지만, 이 결과를 인용할 때는 "LLM 판정자 vs 사람
+채점"이 아니라 "LLM 판정자 vs 2차 검수자(Claude)"로 표기해야 정확하다. `eval:repeated`의
+"개선 전/후"도 실제 기능 개선이 아니라 prompt instruction 변경 1건에 대한 데모이며, 이번
+실행에서는 오히려 개선 프롬프트 쪽 pass율이 낮게 나왔고 그 차이도 통계적으로 유의하지
+않았다 — "반복 측정 없이는 한 번의 결과만으로 개선을 단정할 수 없다"는 이 체계의 설계
+의도를 보여주는 사례다.
