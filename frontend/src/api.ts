@@ -20,15 +20,35 @@ export type AskResponse = {
   total_relevant: number;
   displayed_count: number;
   has_more: boolean;
+  status: string;
+  missing_fields: string[];
+  request_id: string;
+  model_usage: Record<string, number | null>;
+  resolved_question: string;
+};
+
+export type ConversationHistoryItem = {
+  question: string;
+  answer: string;
+  source_articles: string[];
 };
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "/api").replace(/\/$/, "");
 
-export async function askLaw(question: string, refresh = false): Promise<AskResponse> {
+export function reportUrl(path: string) {
+  return `${API_BASE_URL}${path}`;
+}
+
+export async function askLaw(
+  question: string,
+  refresh = false,
+  history: ConversationHistoryItem[] = [],
+  threadId?: string,
+): Promise<AskResponse> {
   const response = await fetch(`${API_BASE_URL}/ask`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question, refresh }),
+    body: JSON.stringify({ question, refresh, history, thread_id: threadId }),
   });
 
   if (!response.ok) {

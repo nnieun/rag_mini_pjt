@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { askLaw } from "./api";
+import { askLaw, reportUrl } from "./api";
 import type { AskResponse, LawSource } from "./api";
 
 type IconName = "archive" | "arrow" | "book" | "check" | "chevron" | "clock" | "close" | "collapse" | "copy" | "external" | "file" | "menu" | "message" | "plus" | "search" | "send" | "sparkle";
@@ -23,10 +23,12 @@ function Citation({ sourceId, active, onClick }: { sourceId: string; active: boo
 }
 
 function AnswerBody({ text, selected, onCitation }: { text: string; selected: string; onCitation: (id: string, claim: string) => void }) {
-  return <>{text.split(/\n+/).filter(Boolean).map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(\[S\d+\])/g).map((part, partIndex) => {
+  return <>{text.split(/\n+/).filter(Boolean).map((paragraph, index) => <p key={`${index}-${paragraph.slice(0, 12)}`}>{paragraph.split(/(\[S\d+\]|\/reports\/[^\s]+)/g).map((part, partIndex) => {
     const match = part.match(/^\[(S\d+)\]$/);
     const claim = paragraph.replace(/\[S\d+\]/g, "").trim();
-    return match ? <Citation key={`${part}-${partIndex}`} sourceId={match[1]} active={selected === match[1]} onClick={() => onCitation(match[1], claim)} /> : <span key={partIndex}>{part}</span>;
+    if (match) return <Citation key={`${part}-${partIndex}`} sourceId={match[1]} active={selected === match[1]} onClick={() => onCitation(match[1], claim)} />;
+    if (part.startsWith("/reports/")) return <a key={partIndex} href={reportUrl(part)} target="_blank" rel="noreferrer">PDF 다운로드</a>;
+    return <span key={partIndex}>{part}</span>;
   })}</p>)}</>;
 }
 
@@ -118,18 +120,14 @@ export default function App() {
     const completedPreviousTurns = followUp && result && !refresh
       ? [...previousTurns, { question: submittedQuestion, result }]
       : previousTurns;
-    const priorQuestions = [
-      ...previousTurns.map((turn) => turn.question),
-      ...(submittedQuestion ? [submittedQuestion] : []),
-    ];
-    const contextSummary = priorQuestions
-      .slice(-3)
-      .map((item) => item.slice(0, 180))
-      .join(" → ");
-    const apiQuestion = followUp && contextSummary
-      ? `이전 대화의 질문: ${contextSummary}\n후속 질문: ${normalized.slice(0, 350)}`
-      : normalized;
-    const cacheKey = apiQuestion;
+    const history = followUp
+      ? completedPreviousTurns.slice(-3).map((turn) => ({
+          question: turn.question,
+          answer: turn.result.answer.slice(0, 8000),
+          source_articles: turn.result.retrieved_articles.slice(0, 30),
+        }))
+      : [];
+    const cacheKey = JSON.stringify({ question: normalized, history });
     const cachedResult = refresh ? undefined : resultCache[cacheKey];
 
     if (followUp && result && !refresh) {
@@ -151,7 +149,12 @@ export default function App() {
     }
     setResult(null); setLoading(true);
     try {
-      const response = await askLaw(apiQuestion, refresh);
+      const response = await askLaw(
+        normalized,
+        refresh,
+        history,
+        conversationRoot || normalized,
+      );
       setResultCache((current) => ({ ...current, [cacheKey]: response }));
       if (!followUp) {
         setRecentQuestions((current) => [normalized, ...current.filter((item) => item !== normalized)].slice(0, 5));
