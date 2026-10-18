@@ -33,34 +33,29 @@ AI 기본법에서 확인할 수 없는 질문에는 일반 지식으로 답을 
 flowchart LR
     user["사용자"] --> frontend["React 법령 검색 UI"]
     frontend -->|"POST /ask"| api["FastAPI"]
+    api --> graph["LangGraph 컴파일 그래프"]
 
-    api --> cache{"PostgreSQL 답변 캐시"}
-    cache -->|"Cache hit"| frontend
-    cache -->|"Cache miss"| classify{"질문 유형 판별"}
+    graph --> followup["후속 질문 LLM 재작성\n(resolve_follow_up)"]
+    followup --> analyze["LLM 의도 분류 + Tool 선택\n(analyze_and_select_tool)"]
+    analyze --> tool["Tool 실행\nSearchLaw / GetArticle / CreatePdf\n(execute_tool)"]
 
-    classify -->|"일반형·정의형 Top 5"| scope["검색 범위 결정"]
-    classify -->|"목록형 Top 20"| scope
+    tool --> route{"근거 충분?"}
+    route -->|"부족, 1회"| rewrite["질의 재작성\n(rewrite_query)"]
+    rewrite --> tool
+    route -->|"CreatePdf"| artifact["PDF 보고서 생성\n/reports/*.pdf"]
+    route -->|"충분"| generate["근거 기반 답변 생성\n(generate)"]
 
-    scope --> embedding["Embedding API"]
-    scope --> bm25["In-memory BM25"]
-    embedding --> dense["Qdrant Dense Search"]
-    qdrant[("Qdrant Vector DB")] --> dense
-    dense --> rrf["RRF 결합"]
-    bm25 --> rrf
+    generate --> validate{"인용·필수값 검증\n(validate)"}
+    validate -->|"실패, 1회"| retry["재생성 준비\n(prepare_retry)"]
+    retry --> generate
+    validate -->|"통과"| cache["PostgreSQL 답변 캐시 저장"]
 
-    rrf --> definition{"정의형 질문인가?"}
-    definition -->|"Yes"| reranker["Qwen GPU Reranking"]
-    definition -->|"No"| parent["Parent 조문 확장"]
-    reranker --> parent
-
-    parent --> llm["LLM 근거 기반 답변"]
-    llm --> validation["인용·Abstention 검증"]
-    validation --> save["PostgreSQL 캐시 저장"]
-    save --> api
-    api -->|"Answer + Sources"| frontend
+    cache --> api
+    artifact --> api
+    api -->|"Answer + Sources + status"| frontend
 ```
 
-일반 질문은 `Top-K=5` Hybrid Search를 사용하고, 정의형 질문만 Qwen 리랭킹을 거친다. 목록형 질문은 후보를 최대 20개까지 확장해 관련 조문 수를 계산하고 처음 5개를 우선 표시한다.
+일반 질문은 `Top-K=5` Hybrid Search를 사용하고, 정의형 질문만 Qwen 리랭킹을 거친다. 목록형 질문은 후보를 최대 20개까지 확장해 관련 조문 수를 계산하고 처음 5개를 우선 표시한다. 조문 번호가 있으면 `GetArticle`, 이전 답변의 PDF 저장 요청이면 `CreatePdf`를 LLM이 직접 선택한다.
 
 ## 1. 목표와 전체 흐름
 
@@ -112,7 +107,16 @@ Retrieval 및 Answer 평가
 | 후속 대화 UI | 완료 | 기존 대화에 질문·답변 누적 및 이전 질문 맥락 전달 |
 | 답변 완료 알림 | 완료 | 검색 중 새 질문 화면으로 이동해도 완료 알림 및 결과 복원 |
 | 근거 없음 처리 | 완료 | 순수 거절 답변은 출처와 근거 패널을 표시하지 않음 |
-| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API 20개 통과 |
+| LangGraph 실제 실행 | 완료 | `/ask`가 컴파일된 그래프를 실행(분류·도구 선택·실행·검증·제한된 재시도) |
+| LLM Tool Calling | 완료 | `SearchLaw`/`GetArticle`/`CreatePdf`를 LLM이 직접 선택, 미지원 호환 경로는 결정적 라우팅 |
+| 답변 검증·재시도 | 완료 | 인용 ID·필수값 검증 실패 시 근거 강화 후 1회 재생성 |
+| 후속 질문 재작성 | 완료 | LLM이 대화 맥락을 독립 검색 질의로 재작성(`resolved_question`) |
+| 문서 업로드 추출·요약 | 완료 | TXT/XML/텍스트 PDF/PNG/JPEG 추출, LLM 요약 + 토큰 사용량 반환 |
+| 이미지 OCR | 완료 | PNG/JPEG는 Tesseract OCR, 스캔 PDF 페이지 변환은 미지원(422) |
+| PDF 보고서 생성 | 완료 | `CreatePdf` Tool Calling으로 이전 답변·출처를 PDF로 저장, `/reports` 다운로드 |
+| 요청·모델 사용량 추적 스키마 | 스키마만 완료 | PostgreSQL 추적 테이블 정의, 애플리케이션 영속 기록·비용 계산은 후속 작업 |
+| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API·그래프·문서 처리 테스트 통과 |
+| TypeScript Agent API | 완료(별도 서브프로젝트) | `agent-api/` — Claude/OpenAI 공용 Provider, Zod 검증, LLM 판정자-사람 채점 대조, 반복측정 통계 |
 
 ## 3. 프로젝트 구조
 
@@ -566,30 +570,29 @@ API는 기본적으로 **Hybrid(C)**를 사용한다. 정의형 질문이면 Hyb
 
 ### 16.1 요청 처리 흐름
 
+`POST /ask`는 `backend/rag/graph.py`에 정의된 LangGraph 컴파일 그래프를 실제로 실행한다.
+
 ```text
 POST /ask
     ↓
-PostgreSQL 답변 캐시 확인
-    ↓ cache miss
-질문 Embedding 생성
+후속 질문이면 LLM이 독립 검색 질의로 재작성 (resolve_follow_up)
     ↓
-Qdrant Dense 후보 검색
-    +
-BM25 키워드 후보 검색
+LLM 의도 분류 + Tool 선택: SearchLaw / GetArticle / CreatePdf (analyze_and_select_tool)
     ↓
-RRF 순위 결합
+Tool 실행 — Hybrid 검색 또는 정확한 조문 조회 또는 PDF 생성 (execute_tool)
     ↓
-정의형: 조건부 Qwen Reranking
-목록형: 확장 검색 및 관련 Source 판별
+근거 관련성 평가
+    ├─ 부족 (최대 1회): 질의 재작성 후 재검색 (rewrite_query)
+    └─ 충분: parent_id로 전체 조문 확장 → LLM 근거 기반 답변 생성 (generate)
     ↓
-parent_id로 전체 조문 확장
+인용 ID·필수값 검증 (validate)
+    ├─ 실패 (최대 1회): 근거 강화 후 재생성 (prepare_retry → generate)
+    └─ 통과: PostgreSQL 캐시 저장
     ↓
-LLM 근거 기반 답변 생성
-    ↓
-Answer + Sources 반환
+Answer + Sources + status 반환
 ```
 
-서버가 시작될 때 Qdrant에서 청크를 한 번 로딩하고 BM25 인덱스를 생성한다. 요청마다 청크 전체를 다시 읽지 않으며, 동일한 질문의 Embedding은 메모리에 캐시한다.
+LLM Tool Calling을 지원하지 않는 호환 엔드포인트에서는 조문 번호와 질문 유형으로 같은 도구를 결정적으로 선택한다. 서버가 시작될 때 Qdrant에서 청크를 한 번 로딩하고 BM25 인덱스를 생성한다. 요청마다 청크 전체를 다시 읽지 않으며, 동일한 질문의 Embedding은 메모리에 캐시한다.
 
 ### 16.2 엔드포인트
 
@@ -597,8 +600,13 @@ Answer + Sources 반환
 |---|---|---|
 | `GET` | `/` | API 기본 정보 |
 | `GET` | `/health` | Qdrant 컬렉션과 로딩된 청크 상태 |
-| `POST` | `/ask` | 질문 검색 및 근거 기반 답변 생성 |
+| `POST` | `/ask` | 질문 검색 및 근거 기반 답변 생성, 후속 질문·PDF 보고서 요청 처리 |
+| `POST` | `/documents/extract` | TXT/XML/텍스트 PDF/PNG/JPEG 업로드 후 텍스트 추출 |
+| `POST` | `/documents/summarize` | 업로드 문서 추출 + LLM 요약, 토큰 사용량 반환 |
+| `GET` | `/reports/{파일명}.pdf` | `CreatePdf` Tool Calling으로 생성된 보고서 다운로드 |
 | `GET` | `/docs` | Swagger UI |
+
+문서 추출·요약 API의 요청 예시와 지원 형식·크기 제한은 [API 실행 가이드](docs/API_GUIDE.md)를 참고한다.
 
 상태 확인:
 
@@ -657,9 +665,16 @@ curl -X POST http://127.0.0.1:8000/ask \
   "processing_ms": 5480.21,
   "total_relevant": 1,
   "displayed_count": 1,
-  "has_more": false
+  "has_more": false,
+  "status": "answered",
+  "missing_fields": [],
+  "request_id": "f3b2c1a0-...",
+  "model_usage": { "input_tokens": 812, "output_tokens": 146, "total_tokens": 958 },
+  "resolved_question": "고영향 인공지능이란 무엇인가요?"
 }
 ```
+
+`status`는 근거를 찾아 답했으면 `answered`, 검색 결과가 없거나 근거가 부족하면 `insufficient_evidence`다. `resolved_question`은 후속 질문을 LLM이 독립 질의로 재작성한 실제 검색 질문이며, 첫 질문이면 입력과 동일하다.
 
 `sources`에는 검색된 하위 청크가 아니라 `parent_id`로 확장한 전체 조문이 들어간다. 답변의 `[S1]`, `[S2]` 표시는 각 `source_id`와 대응한다.
 
@@ -753,10 +768,13 @@ React 프론트엔드는 다음 기능을 제공한다.
 
 - 목록형 검색을 주체·의무 유형·주제 metadata filtering으로 고도화
 - 법령 수가 늘어날 때 `search_id`와 cursor pagination으로 근거 목록 분리
-- 후속 질문을 단순 질문 문자열 결합이 아닌 서버 측 대화 세션으로 관리
+- 후속 질문 맥락을 클라이언트가 넘기는 `history` 배열 대신 서버 측 대화 세션으로 관리
 - 동기 GPU 리랭킹을 작업 스레드로 분리하고 동시 실행 수 제한
 - Answer 품질 평가 문항을 전체 Golden Set으로 확대
 - 배포 환경용 FastAPI·프론트엔드 컨테이너와 CI 구축
+- 스캔 PDF 페이지 이미지 OCR 변환 지원 (현재 텍스트 PDF만 지원, 스캔 PDF는 422)
+- PostgreSQL 요청·모델·도구 사용량 추적 스키마를 애플리케이션에 실제로 연결하고 비용 집계 구현
+- 업로드 문서 추출 결과의 영구 저장·색인·삭제 수명주기 관리
 
 ## 20. 시행착오 목록
 
