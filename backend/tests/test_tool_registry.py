@@ -15,7 +15,7 @@ from tests.test_tool_selection import FakeBoundLLM
 
 class RegistryTest(unittest.TestCase):
     def test_registry_has_schema_and_description_for_every_tool(self):
-        self.assertEqual(set(REGISTRY), {"SearchLaw", "GetArticle", "CreatePdf"})
+        self.assertEqual(set(REGISTRY), {"SearchLaw", "GetArticle", "GetRelatedArticles", "CreatePdf"})
         for spec in REGISTRY.values():
             self.assertTrue(spec.description)
             self.assertIn("properties", spec.args_model.model_json_schema())

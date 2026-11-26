@@ -12,7 +12,8 @@ AI 기본법 내용을 말할 때는 기억에 의존하지 말고 `ai-basic-act
 1. 조문 번호를 알면 `get_article`(article_number)로 원문을 가져온다.
 2. 번호를 모르면 `search_law`(query, top_k)로 관련 조문을 찾고, 답에 쓸 조문은 `get_article`로 전문을 다시 확인한다.
 3. 여러 조문을 종합한 설명이 필요하면 `ask_law`(question)를 쓸 수 있다. 이때도 돌려받은 sources의 조문을 그대로 인용한다.
-4. 목차가 필요하면 리소스 `law://ai-basic-act/toc`를 읽는다.
+4. 의무 조문의 과태료·위임처럼 연결된 조문이 필요하면 `get_related_articles`(article_number)로 인용 관계 1단계를 가져온다.
+5. 목차가 필요하면 리소스 `law://ai-basic-act/toc`를 읽는다.
 
 ## 인용 형식
 

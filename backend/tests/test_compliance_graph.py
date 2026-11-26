@@ -114,7 +114,7 @@ class ComplianceGraphTest(unittest.IsolatedAsyncioTestCase):
         with trace_scope(trace):
             result = await ComplianceAgent(pipeline, llm).assess(HIRING)
 
-        self.assertEqual(llm.bound, ["SearchLaw", "GetArticle"])
+        self.assertEqual(llm.bound, ["SearchLaw", "GetArticle", "GetRelatedArticles"])
         self.assertEqual(result["method"], "llm")
         self.assertEqual(result["assessment"].high_impact_categories, ["사"])
         # S1=제2조, S2=제34조(검색), S3=제33조; 제34조는 GetArticle로 다시 와도 같은 id

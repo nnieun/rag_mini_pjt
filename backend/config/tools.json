@@ -1,4 +1,4 @@
 {
   "_comment": "LLM과 MCP 서버에 노출할 도구 목록. rag/tools.py의 REGISTRY에 있는 이름만 쓸 수 있다.",
-  "allowed": ["SearchLaw", "GetArticle", "CreatePdf"]
+  "allowed": ["SearchLaw", "GetArticle", "GetRelatedArticles", "CreatePdf"]
 }

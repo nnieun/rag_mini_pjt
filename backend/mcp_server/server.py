@@ -11,7 +11,7 @@ import os
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from pydantic import Field
@@ -216,6 +216,25 @@ def build_server(
             if not results:
                 raise ValueError(f"제{article_number}조는 AI 기본법에 없습니다.")
             return [format_article(document) for document in results]
+
+    if "GetRelatedArticles" in allowed:
+
+        @server.tool()
+        async def get_related_articles(
+            article_number: Annotated[int, Field(ge=1, description="기준 조문 번호")],
+            direction: Annotated[
+                Literal["both", "out", "in"],
+                Field(description="out: 이 조문이 인용하는 조문, in: 이 조문을 인용하는 조문"),
+            ] = "both",
+        ) -> list[dict[str, str]]:
+            """AI 기본법에서 특정 조문과 인용 관계로 이어진 조문(1단계)을 가져온다. 의무 조문의 과태료·위임 조문을 찾을 때 쓴다."""
+            results = await run_traced(
+                "GetRelatedArticles", {"article_number": article_number, "direction": direction}
+            )
+            return [
+                {**format_article(document), "relation": str(document.get("relation") or "")}
+                for document in results
+            ]
 
     if _env_flag("RAG_MCP_ASK_ENABLED", True):
 

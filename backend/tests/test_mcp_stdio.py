@@ -33,7 +33,7 @@ class McpStdioTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(init.serverInfo.name, "ai-basic-act")
         self.assertIn("AI 기본법", init.instructions or "")
-        self.assertEqual(tools, {"search_law", "get_article", "ask_law"})
+        self.assertEqual(tools, {"search_law", "get_article", "get_related_articles", "ask_law"})
         self.assertEqual(article.structuredContent["result"][0]["article"], "제33조")
         self.assertTrue(invalid.isError)  # query min_length=2
         self.assertTrue(hidden.isError)  # CreatePdf is not exposed over MCP

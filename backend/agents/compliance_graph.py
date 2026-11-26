@@ -49,7 +49,7 @@ MAX_TOOL_CALLS = 8
 REVIEW_CONFIDENCE = 0.7
 MAX_CITATION_RETRIES = 1
 MAX_DESCRIPTION_CHARS = 12000
-AGENT_TOOLS = ("SearchLaw", "GetArticle")
+AGENT_TOOLS = ("SearchLaw", "GetArticle", "GetRelatedArticles")
 
 
 def merge_sources(left: dict[str, dict], right: dict[str, dict]) -> dict[str, dict]:
@@ -83,7 +83,7 @@ AGENT_PROMPT = """너는 AI 기본법 준수 점검을 위한 조사 담당이�
 - 제2조제4호(고영향 인공지능 정의와 각 목)에서 서비스 영역이 해당하는 목
 - 제31조(투명성), 제32조(안전성), 제33조(고영향 확인), 제34조(고영향 사업자 책무), 제35조(영향평가), 제36조(국내대리인) 중 관련 조문
 
-GetArticle로 조문 원문을, SearchLaw로 키워드 검색을 한다. 한 번에 여러 도구를 호출해도 된다.
+GetArticle로 조문 원문을, SearchLaw로 키워드 검색을, GetRelatedArticles로 그 조문이 인용하거나 그 조문을 인용하는 조문(예: 의무 조문을 인용하는 과태료 조문)을 찾는다. 한 번에 여러 도구를 호출해도 된다.
 도구 호출은 전체 {limit}회까지다. 근거가 충분하면 도구를 더 부르지 말고 "조사 완료"라고만 답한다."""
 
 ASSESS_PROMPT = """AI 기본법 준수 점검 결과를 작성한다.

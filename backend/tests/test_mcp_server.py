@@ -44,7 +44,7 @@ class McpServerTest(unittest.IsolatedAsyncioTestCase):
     async def test_lists_tools_without_loading_pipeline(self):
         async with create_connected_server_and_client_session(self.server._mcp_server) as client:
             tools = {tool.name: tool for tool in (await client.list_tools()).tools}
-        self.assertEqual(set(tools), {"search_law", "get_article", "ask_law"})
+        self.assertEqual(set(tools), {"search_law", "get_article", "get_related_articles", "ask_law"})
         schema = tools["search_law"].inputSchema
         self.assertEqual(schema["properties"]["top_k"]["maximum"], 20)
         self.assertEqual(self.created, 0)

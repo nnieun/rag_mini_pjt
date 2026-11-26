@@ -20,7 +20,8 @@ from pydantic import BaseModel
 
 from common.telemetry import tool_call_scope
 from documents.pdf_report import create_answer_pdf
-from rag.schemas import CreatePdf, GetArticle, SearchLaw
+from rag.references import graph_for_retriever
+from rag.schemas import CreatePdf, GetArticle, GetRelatedArticles, SearchLaw
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,13 @@ async def _get_article(context: ToolContext, args: GetArticle) -> list[dict]:
     return exact_article_results(context.pipeline.retriever, args.article_number)
 
 
+async def _get_related_articles(context: ToolContext, args: GetRelatedArticles) -> list[dict]:
+    graph = graph_for_retriever(context.pipeline.retriever)
+    return graph.related_chunks(
+        f"제{args.article_number}조", direction=args.direction, limit=args.max_articles
+    )
+
+
 async def _create_pdf(context: ToolContext, args: CreatePdf) -> str:
     if not context.history:
         raise ValueError("PDF로 만들 이전 답변이 없습니다.")
@@ -90,6 +98,7 @@ REGISTRY: dict[str, ToolSpec] = {
     for spec in (
         ToolSpec("SearchLaw", SearchLaw, _search_law),
         ToolSpec("GetArticle", GetArticle, _get_article),
+        ToolSpec("GetRelatedArticles", GetRelatedArticles, _get_related_articles),
         ToolSpec("CreatePdf", CreatePdf, _create_pdf),
     )
 }

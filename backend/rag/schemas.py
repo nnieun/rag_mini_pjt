@@ -48,6 +48,14 @@ class GetArticle(BaseModel):
     article_number: int = Field(ge=1)
 
 
+class GetRelatedArticles(BaseModel):
+    """Get the articles that one article of the AI Basic Act cites or is cited by (one hop)."""
+
+    article_number: int = Field(ge=1)
+    direction: Literal["both", "out", "in"] = "both"
+    max_articles: int = Field(default=6, ge=1, le=10)
+
+
 class CreatePdf(BaseModel):
     """Create a PDF report from the latest verified answer and its sources."""
 
