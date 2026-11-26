@@ -12,11 +12,9 @@ from typing_extensions import TypedDict
 from rag.models import AnswerResult
 from rag.pipeline import RAGPipeline, is_list_query
 from rag.retriever import is_definition_query
-from rag.schemas import CreatePdf, FollowUpResolution, GetArticle, RequestAnalysis, SearchLaw
-from rag.tools import execute_tool
+from rag.schemas import FollowUpResolution, RequestAnalysis
+from rag.tools import allowed_specs, allowed_tools, execute_tool
 from rag.validators import validate_answer
-from documents.pdf_report import create_answer_pdf
-from common.telemetry import tool_call_scope
 
 
 class RAGGraphState(TypedDict, total=False):
@@ -139,7 +137,6 @@ def grade_answer(answer: str, source_count: int) -> bool:
     return source_count > 0 and bool(re.search(r"\[S\d+\]", answer))
 
 
-ROUTABLE_TOOLS = {"SearchLaw", "GetArticle", "CreatePdf"}
 PDF_TERMS = ("pdf", "피디에프")
 TOOL_ROUTING_PROMPT = (
     "AI 기본법 질문에 필요한 도구 하나를 선택하세요. "
@@ -153,11 +150,16 @@ def select_tool_by_rule(
     search_question: str,
     rewritten_question: str,
     analysis: RequestAnalysis,
+    allowed: frozenset[str] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    """Deterministic routing used when the LLM cannot or does not pick a tool."""
-    if any(term in question.lower() for term in PDF_TERMS):
+    """Deterministic routing used when the LLM cannot or does not pick a tool.
+
+    A tool hidden in config/tools.json is never chosen; SearchLaw is the fallback.
+    """
+    allowed = allowed if allowed is not None else allowed_tools()
+    if "CreatePdf" in allowed and any(term in question.lower() for term in PDF_TERMS):
         return "CreatePdf", {"title": "AI 기본법 답변 보고서", "include_sources": True}
-    if analysis.article_number:
+    if "GetArticle" in allowed and analysis.article_number:
         return "GetArticle", {"article_number": analysis.article_number}
     return "SearchLaw", {
         "query": rewritten_question,
@@ -170,10 +172,11 @@ async def select_tool_by_llm(
 ) -> tuple[str, dict[str, Any]] | None:
     """Ask the LLM to pick a tool. Returns None so the caller keeps the rule choice."""
     bind_tools = getattr(llm, "bind_tools", None)
-    if not callable(bind_tools):
+    specs = allowed_specs()
+    if not callable(bind_tools) or not specs:
         return None
     try:
-        response = await bind_tools([SearchLaw, GetArticle, CreatePdf]).ainvoke(
+        response = await bind_tools([spec.args_model for spec in specs]).ainvoke(
             [("system", TOOL_ROUTING_PROMPT), ("human", question)]
         )
     except Exception:
@@ -182,7 +185,7 @@ async def select_tool_by_llm(
     if not calls:
         return None
     name = str(calls[0].get("name", ""))
-    if name not in ROUTABLE_TOOLS:
+    if name not in {spec.name for spec in specs}:
         return None
     return name, dict(calls[0].get("args") or {})
 
@@ -287,29 +290,17 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
         return {**base, "tool_name": tool_name, "tool_arguments": arguments}
 
     async def run_tool(state: RAGGraphState) -> dict[str, Any]:
-        if state["tool_name"] == "CreatePdf":
-            args = CreatePdf.model_validate(state["tool_arguments"])
-            history = state.get("history") or state.get("turns") or []
-            if not history:
-                raise ValueError("PDF로 만들 이전 답변이 없습니다.")
-            latest = history[-1]
-            async with tool_call_scope("CreatePdf"):
-                _, url = create_answer_pdf(
-                    title=args.title,
-                    question=str(latest.get("question", "")),
-                    answer=str(latest.get("answer", "")),
-                    source_articles=list(latest.get("source_articles", [])),
-                    include_sources=args.include_sources,
-                )
-            return {"artifact_url": url, "documents": [], "relevance": 1.0}
-        documents = await execute_tool(
+        result = await execute_tool(
             pipeline,
             state["tool_name"],
             state["tool_arguments"],
             use_reranking=bool(state.get("use_reranking")),
+            history=state.get("history") or state.get("turns") or [],
         )
+        if state["tool_name"] == "CreatePdf":
+            return {"artifact_url": result, "documents": [], "relevance": 1.0}
         question = state.get("rewritten_question") or state["question"]
-        return {"documents": documents, "relevance": grade_documents(question, documents)}
+        return {"documents": result, "relevance": grade_documents(question, result)}
 
     async def route_documents(
         state: RAGGraphState,
