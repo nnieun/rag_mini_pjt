@@ -26,6 +26,9 @@ jobs:
       - name: Install Python
         run: uv python install 3.12
 
+      - name: Install Korean font for PDF reports
+        run: sudo apt-get update -q && sudo apt-get install -y -q fonts-nanum
+
       - name: Install dependencies
         run: uv sync --frozen --python 3.12
 

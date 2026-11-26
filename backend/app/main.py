@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agents.compliance_graph import ComplianceAgent
+from agents.compliance_report import report_on_completion
 from agents.compliance_runs import (
     ComplianceService,
     InMemoryComplianceRunStore,
@@ -228,9 +229,11 @@ def create_app(
         )
         app.state.trace_store = trace_store
         compliance_store = await open_compliance_store()
+        compliance_agent = ComplianceAgent(pipeline, checkpointer=checkpointer)
         app.state.compliance_service = ComplianceService(
-            ComplianceAgent(pipeline, checkpointer=checkpointer),
+            compliance_agent,
             compliance_store,
+            on_finished=report_on_completion(compliance_agent),
             trace_sink=lambda trace: _schedule_trace_write(app, trace),
         )
         app.state.pending_trace_writes = set()
