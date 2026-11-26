@@ -3,23 +3,22 @@
 - `trace_scope()` opens one `RequestTrace` per HTTP request and stores it in a contextvar.
 - `TraceCallbackHandler` is attached to the LLM, so every LangChain call made while a
   trace is active is recorded with its token usage and latency.
-- `record_tool_call()` wraps a tool execution and records its status and latency.
+- `tool_call_scope()` wraps a tool execution and records its status and latency.
 
 Code that runs outside a request (scripts, tests) has no active trace; every
 recording helper then does nothing.
 """
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from time import perf_counter
-from typing import Any, TypeVar
+from typing import Any
 from uuid import UUID, uuid4
 
 from langchain_core.callbacks import AsyncCallbackHandler
 
-T = TypeVar("T")
 
 
 @dataclass
@@ -131,13 +130,6 @@ async def tool_call_scope(tool_name: str, *, channel: str = "api") -> AsyncItera
         trace.add_tool_call(
             tool_name, "ok", (perf_counter() - started) * 1000, channel=channel
         )
-
-
-async def record_tool_call(
-    tool_name: str, call: Callable[[], Awaitable[T]], *, channel: str = "api"
-) -> T:
-    async with tool_call_scope(tool_name, channel=channel):
-        return await call()
 
 
 def _usage_from(response: Any) -> dict[str, Any]:

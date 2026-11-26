@@ -14,7 +14,7 @@ from common.telemetry import (
     RequestTrace,
     TraceCallbackHandler,
     get_current_trace,
-    record_tool_call,
+    tool_call_scope,
     trace_scope,
 )
 from rag.models import AnswerResult, Source
@@ -73,9 +73,11 @@ class TraceCallbackTest(unittest.IsolatedAsyncioTestCase):
             raise ValueError("bad")
 
         with trace_scope() as trace:
-            self.assertEqual(await record_tool_call("SearchLaw", ok), [1])
+            async with tool_call_scope("SearchLaw"):
+                self.assertEqual(await ok(), [1])
             with self.assertRaises(ValueError):
-                await record_tool_call("GetArticle", fail)
+                async with tool_call_scope("GetArticle"):
+                    await fail()
         self.assertEqual(
             [(c["tool_name"], c["status"], c["error_code"]) for c in trace.tool_calls],
             [("SearchLaw", "ok", None), ("GetArticle", "error", "ValueError")],
@@ -98,7 +100,8 @@ class FakeGraph:
 
     async def answer(self, question, **kwargs):
         self.seen_trace = get_current_trace()
-        await record_tool_call("SearchLaw", self._noop)
+        async with tool_call_scope("SearchLaw"):
+            await self._noop()
         return AnswerResult(
             answer="근거 답변 [S1]",
             sources=[Source("S1", "제2조", "", "", "", "정의", "근거")],

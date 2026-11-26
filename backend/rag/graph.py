@@ -1,7 +1,6 @@
 """LangGraph orchestration for extraction, tool selection, RAG and validation."""
 
 import asyncio
-import operator
 import os
 import re
 from typing import Annotated, Any, Literal
@@ -17,6 +16,16 @@ from rag.tools import execute_tool
 from rag.validators import validate_answer
 from documents.pdf_report import create_answer_pdf
 from common.telemetry import tool_call_scope
+
+
+MAX_REMEMBERED_TURNS = 3
+
+
+def append_recent_turns(
+    left: list[dict[str, Any]] | None, right: list[dict[str, Any]] | None
+) -> list[dict[str, Any]]:
+    """턴을 이어 붙이되 최근 MAX_REMEMBERED_TURNS개만 체크포인트에 남긴다."""
+    return ((left or []) + (right or []))[-MAX_REMEMBERED_TURNS:]
 
 
 class RAGGraphState(TypedDict, total=False):
@@ -38,11 +47,8 @@ class RAGGraphState(TypedDict, total=False):
     answer_result: AnswerResult
     validation_errors: list[str]
     artifact_url: str
-    # 체크포인터가 있으면 thread_id별로 대화 턴이 누적된다(append reducer).
-    turns: Annotated[list[dict[str, Any]], operator.add]
-
-
-MAX_REMEMBERED_TURNS = 3
+    # 체크포인터가 있으면 thread_id별로 대화 턴이 누적되되, 최근 턴만 남긴다.
+    turns: Annotated[list[dict[str, Any]], append_recent_turns]
 
 
 def checkpoint_serde():
