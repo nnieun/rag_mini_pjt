@@ -69,7 +69,9 @@ def sample_trace():
     trace.add_model_call(None, "generate", 120.5, model_name="gpt-test")
     trace.model_calls[0].update(input_tokens=10, output_tokens=4, total_tokens=14)
     trace.add_tool_call("SearchLaw", "ok", 30.0)
-    trace.add_tool_call("GetArticle", "error", 1.0, error_code="ValueError")
+    trace.add_tool_call(
+        "GetArticle", "error", 1.0, error_code="ValueError", channel="mcp", arguments_hash="a" * 64
+    )
     trace.finish()
     return trace
 
@@ -85,10 +87,11 @@ class TraceStoreTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tables, ["request_runs", "model_calls", "tool_calls", "tool_calls"])
         run_params = conn.statements[0][1]
         self.assertEqual(run_params[0], trace.request_id)
-        self.assertEqual(run_params[1:4], ("v-test", "answered", False))
+        self.assertEqual(run_params[1:5], ("v-test", "/ask", "answered", False))
         self.assertEqual(conn.statements[1][1][0], "run-uuid")
         self.assertEqual(conn.statements[1][1][1:6], ("generate", "gpt-test", 10, 4, 14))
-        self.assertEqual(conn.statements[3][1][1:3], ("GetArticle", "error"))
+        self.assertEqual(conn.statements[2][1][1:5], ("SearchLaw", "api", None, "ok"))
+        self.assertEqual(conn.statements[3][1][1:5], ("GetArticle", "mcp", "a" * 64, "error"))
         self.assertTrue(conn.committed)
 
     async def test_duplicate_request_id_is_skipped(self):
@@ -109,6 +112,8 @@ class TraceStoreTest(unittest.IsolatedAsyncioTestCase):
         sql = schema_sql()
         for table in ("request_runs", "model_calls", "tool_calls"):
             self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS channel", sql)
+        self.assertIn("ADD COLUMN IF NOT EXISTS arguments_hash", sql)
         self.assertNotIn("BEGIN;", sql)
 
 

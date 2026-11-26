@@ -1,7 +1,8 @@
 """Persist a finished RequestTrace into request_runs, model_calls and tool_calls.
 
-Tables are defined in docker/postgres-init/003_observability.sql. `open()` applies the
-same DDL with IF NOT EXISTS so an existing database volume picks them up too.
+Tables are defined in docker/postgres-init/003_observability.sql and
+004_tool_calls_channel.sql. `open()` applies the same idempotent DDL so an existing
+database volume picks them up too.
 """
 
 import logging
@@ -14,11 +15,13 @@ from common.telemetry import RequestTrace
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_PATH = Path(__file__).resolve().parents[1] / "docker" / "postgres-init" / "003_observability.sql"
+SCHEMA_DIR = Path(__file__).resolve().parents[1] / "docker" / "postgres-init"
+SCHEMA_FILES = ("003_observability.sql", "004_tool_calls_channel.sql")
 
 INSERT_RUN = """
-INSERT INTO request_runs (request_id, pipeline_version, status, cache_hit, elapsed_ms, error_code)
-VALUES (%s, %s, %s, %s, %s, %s)
+INSERT INTO request_runs (
+    request_id, pipeline_version, endpoint, status, cache_hit, elapsed_ms, error_code
+) VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (request_id) DO NOTHING
 RETURNING id
 """
@@ -31,13 +34,14 @@ INSERT INTO model_calls (
 """
 
 INSERT_TOOL_CALL = """
-INSERT INTO tool_calls (request_run_id, tool_name, status, elapsed_ms, error_code)
-VALUES (%s, %s, %s, %s, %s)
+INSERT INTO tool_calls (
+    request_run_id, tool_name, channel, arguments_hash, status, elapsed_ms, error_code
+) VALUES (%s, %s, %s, %s, %s, %s, %s)
 """
 
 
 def schema_sql() -> str:
-    sql = SCHEMA_PATH.read_text(encoding="utf-8")
+    sql = "\n".join((SCHEMA_DIR / name).read_text(encoding="utf-8") for name in SCHEMA_FILES)
     # 파일의 BEGIN/COMMIT은 초기화 스크립트용이다. 여기서는 연결의 트랜잭션을 쓴다.
     return sql.replace("BEGIN;", "").replace("COMMIT;", "")
 
@@ -64,6 +68,7 @@ class PostgresTraceStore:
                 (
                     trace.request_id,
                     self.pipeline_version,
+                    (trace.endpoint or None) and trace.endpoint[:100],
                     trace.status[:30],
                     trace.cache_hit,
                     trace.elapsed_ms,
@@ -96,6 +101,8 @@ class PostgresTraceStore:
                     (
                         run_id,
                         str(call["tool_name"])[:100],
+                        str(call.get("channel") or "api")[:20],
+                        call.get("arguments_hash"),
                         str(call["status"])[:30],
                         call.get("elapsed_ms"),
                         call.get("error_code"),

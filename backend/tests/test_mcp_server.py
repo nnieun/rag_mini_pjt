@@ -78,21 +78,36 @@ class McpServerTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(names, ["get_article"])
         self.assertTrue(unknown.isError)
 
-    async def test_tool_call_is_traced_with_mcp_channel(self):
-        from mcp_server import server as module
+    async def test_tool_calls_are_traced_with_mcp_channel(self):
+        traces = []
+        server = build_server(AgenticFakePipeline, FakeAnswerer, trace_sink=traces.append)
+        async with create_connected_server_and_client_session(server._mcp_server) as client:
+            await client.call_tool("get_article", {"article_number": 33})
+            await client.call_tool("get_article", {"article_number": 999})
+            await client.call_tool("ask_law", {"question": "고영향 AI 확인 절차는?"})
+        self.assertEqual(
+            [(trace.endpoint, trace.status) for trace in traces],
+            [("mcp:GetArticle", "ok"), ("mcp:GetArticle", "ok"), ("mcp:AskLaw", "ok")],
+        )
+        call = traces[0].tool_calls[0]
+        self.assertEqual(call["channel"], "mcp")
+        self.assertEqual(len(call["arguments_hash"]), 64)
+        self.assertNotEqual(call["arguments_hash"], traces[1].tool_calls[0]["arguments_hash"])
+        self.assertEqual(traces[2].tool_calls[0]["tool_name"], "AskLaw")
+        self.assertIsNotNone(traces[0].ended_at)
 
-        captured = []
-        original = module.trace_scope
+    async def test_failed_tool_call_trace_has_error_status(self):
+        traces = []
 
-        def capture(trace):
-            captured.append(trace)
-            return original(trace)
+        def broken():
+            raise RuntimeError("qdrant down")
 
-        with patch.object(module, "trace_scope", capture):
-            async with create_connected_server_and_client_session(self.server._mcp_server) as client:
-                await client.call_tool("get_article", {"article_number": 33})
-        self.assertEqual(captured[0].tool_calls[0]["channel"], "mcp")
-        self.assertEqual(captured[0].endpoint, "mcp:GetArticle")
+        server = build_server(broken, FakeAnswerer, trace_sink=traces.append)
+        async with create_connected_server_and_client_session(server._mcp_server) as client:
+            result = await client.call_tool("search_law", {"query": "고영향"})
+        self.assertTrue(result.isError)
+        self.assertEqual(traces[0].status, "error")
+        self.assertEqual(traces[0].errors, ["RuntimeError"])
 
     async def test_ask_law_returns_answer_with_sources(self):
         async with create_connected_server_and_client_session(self.server._mcp_server) as client:

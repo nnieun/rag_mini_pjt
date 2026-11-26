@@ -57,6 +57,37 @@ class McpHttpTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(article.structuredContent["result"][0]["article"], "제33조")
         self.assertEqual(ClosablePipeline.created, 1)
 
+    async def test_mcp_calls_are_saved_through_app_trace_store(self):
+        import asyncio
+
+        saved = []
+
+        class RecordingStore:
+            async def save(self, trace):
+                saved.append(trace)
+
+        with patch.dict(os.environ, BASE_ENV):
+            app = create_app(ClosablePipeline)
+            original = app.router.lifespan_context
+
+            def lifespan_with_store(application):
+                class Ctx:
+                    async def __aenter__(self_inner):
+                        self_inner.inner = original(application)
+                        await self_inner.inner.__aenter__()
+                        application.state.trace_store = RecordingStore()
+
+                    async def __aexit__(self_inner, *exc):
+                        await asyncio.gather(*application.state.pending_trace_writes)
+                        return await self_inner.inner.__aexit__(*exc)
+
+                return Ctx()
+
+            app.router.lifespan_context = lifespan_with_store
+            await self.run_client(app)
+        self.assertEqual([trace.endpoint for trace in saved], ["mcp:GetArticle"])
+        self.assertEqual(saved[0].tool_calls[0]["channel"], "mcp")
+
     async def test_token_is_required_when_configured(self):
         env = {**BASE_ENV, "RAG_MCP_TOKEN": "secret"}
         with patch.dict(os.environ, env):

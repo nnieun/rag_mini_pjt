@@ -9,6 +9,8 @@ Code that runs outside a request (scripts, tests) has no active trace; every
 recording helper then does nothing.
 """
 
+import hashlib
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
@@ -64,6 +66,7 @@ class RequestTrace:
         *,
         error_code: str | None = None,
         channel: str = "api",
+        arguments_hash: str | None = None,
     ) -> None:
         self.tool_calls.append(
             {
@@ -72,6 +75,7 @@ class RequestTrace:
                 "elapsed_ms": round(elapsed_ms, 2),
                 "error_code": error_code,
                 "channel": channel,
+                "arguments_hash": arguments_hash,
             }
         )
 
@@ -110,9 +114,26 @@ def trace_scope(trace: RequestTrace | None = None):
         _current_trace.reset(token)
 
 
+def hash_arguments(arguments: dict[str, Any] | None) -> str | None:
+    """SHA-256 of the canonical JSON arguments.
+
+    Stored instead of the raw arguments, so identical calls can be grouped without
+    keeping the user's query text in the tracing tables.
+    """
+    if arguments is None:
+        return None
+    canonical = json.dumps(
+        arguments, sort_keys=True, ensure_ascii=False, separators=(",", ":"), default=str
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 @asynccontextmanager
-async def tool_call_scope(tool_name: str, *, channel: str = "api") -> AsyncIterator[None]:
+async def tool_call_scope(
+    tool_name: str, *, channel: str = "api", arguments: dict[str, Any] | None = None
+) -> AsyncIterator[None]:
     started = perf_counter()
+    digest = hash_arguments(arguments)
     try:
         yield
     except Exception as error:
@@ -124,12 +145,17 @@ async def tool_call_scope(tool_name: str, *, channel: str = "api") -> AsyncItera
                 (perf_counter() - started) * 1000,
                 error_code=type(error).__name__,
                 channel=channel,
+                arguments_hash=digest,
             )
         raise
     trace = get_current_trace()
     if trace is not None:
         trace.add_tool_call(
-            tool_name, "ok", (perf_counter() - started) * 1000, channel=channel
+            tool_name,
+            "ok",
+            (perf_counter() - started) * 1000,
+            channel=channel,
+            arguments_hash=digest,
         )
 
 

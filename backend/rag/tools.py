@@ -135,7 +135,7 @@ async def execute_tool(
     Raises ValueError for an unknown or disallowed tool and for invalid arguments
     (pydantic.ValidationError is a ValueError subclass).
     """
-    async with tool_call_scope(name, channel=channel):
+    async with tool_call_scope(name, channel=channel, arguments=arguments):
         names = allowed if allowed is not None else allowed_tools()
         spec = REGISTRY.get(name)
         if spec is None or name not in names:

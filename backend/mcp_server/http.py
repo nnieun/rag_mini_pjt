@@ -20,7 +20,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mcp_server.server import build_server
+from mcp_server.server import TraceSink, build_server
 
 MCP_PATH = "/mcp"
 LOCAL_HOSTS = "127.0.0.1:*,localhost:*,[::1]:*"
@@ -60,12 +60,13 @@ class BearerTokenGuard:
         await self.app(scope, receive, send)
 
 
-def build_http_server(app_state: Any) -> FastMCP:
+def build_http_server(app_state: Any, trace_sink: TraceSink | None = None) -> FastMCP:
     """MCP server whose tools use the FastAPI app's pipeline and agent."""
 
     return build_server(
         lambda: app_state.pipeline,
         lambda _pipeline: app_state.rag_graph,
+        trace_sink=trace_sink,
         streamable_http_path=MCP_PATH,
         stateless_http=True,
         json_response=True,

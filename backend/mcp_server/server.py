@@ -9,7 +9,8 @@ the first tool call, so MCP clients can list tools without waiting for it.
 import asyncio
 import os
 import re
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
 from mcp.server.fastmcp import FastMCP
@@ -125,20 +126,43 @@ def format_article(document: dict) -> dict[str, str]:
     }
 
 
-async def run_traced(name: str, arguments: dict, pipeline: Any, **kwargs: Any) -> Any:
-    with trace_scope(RequestTrace(endpoint=f"mcp:{name}")):
-        return await execute_tool(pipeline, name, arguments, channel="mcp", **kwargs)
+TraceSink = Callable[[RequestTrace], Awaitable[None] | None]
+
+
+@asynccontextmanager
+async def mcp_trace(name: str, sink: TraceSink | None) -> AsyncIterator[RequestTrace]:
+    """One RequestTrace per MCP tool call, handed to `sink` when the call ends."""
+    trace = RequestTrace(endpoint=f"mcp:{name}")
+    with trace_scope(trace):
+        try:
+            yield trace
+        except Exception as error:
+            trace.status = "error"
+            trace.errors.append(type(error).__name__)
+            raise
+        else:
+            trace.status = "ok"
+        finally:
+            trace.finish()
+            if sink is not None:
+                pending = sink(trace)
+                if pending is not None:
+                    await pending
 
 
 def build_server(
     pipeline_factory: Callable[[], Any] | None = None,
     answerer_factory: Callable[[Any], Any] | None = None,
+    *,
+    trace_sink: TraceSink | None = None,
     **settings: Any,
 ) -> FastMCP:
     """Build the MCP server.
 
     `answerer_factory(pipeline)` must return an object with
     `async answer(question) -> AnswerResult`; by default it is `LangGraphRAG`.
+    `trace_sink(trace)` receives every finished tool-call trace (for example to save it
+    in PostgreSQL); it may be sync or async and must not raise.
     Extra keyword arguments go to `FastMCP` (for example the HTTP transport settings).
     """
     if pipeline_factory is None:
@@ -163,6 +187,10 @@ def build_server(
                     answerer_box["value"] = answerer_factory(await pipeline.get())
         return answerer_box["value"]
 
+    async def run_traced(name: str, arguments: dict) -> Any:
+        async with mcp_trace(name, trace_sink):
+            return await execute_tool(await pipeline.get(), name, arguments, channel="mcp")
+
     allowed = allowed_tools()
     server = FastMCP("ai-basic-act", instructions=SERVER_INSTRUCTIONS, **settings)
 
@@ -174,9 +202,7 @@ def build_server(
             top_k: Annotated[int, Field(ge=1, le=20, description="돌려받을 조문 수")] = 5,
         ) -> list[dict[str, str]]:
             """AI 기본법에서 질문과 관련된 조문을 Hybrid 검색(Dense+BM25+RRF)으로 찾는다."""
-            results = await run_traced(
-                "SearchLaw", {"query": query, "top_k": top_k}, await pipeline.get()
-            )
+            results = await run_traced("SearchLaw", {"query": query, "top_k": top_k})
             return [format_article(document) for document in results]
 
     if "GetArticle" in allowed:
@@ -186,9 +212,7 @@ def build_server(
             article_number: Annotated[int, Field(ge=1, description="조문 번호. 제33조라면 33")],
         ) -> list[dict[str, str]]:
             """AI 기본법의 특정 조문 원문을 조·항·호 단위로 그대로 가져온다."""
-            results = await run_traced(
-                "GetArticle", {"article_number": article_number}, await pipeline.get()
-            )
+            results = await run_traced("GetArticle", {"article_number": article_number})
             if not results:
                 raise ValueError(f"제{article_number}조는 AI 기본법에 없습니다.")
             return [format_article(document) for document in results]
@@ -200,8 +224,8 @@ def build_server(
             question: Annotated[str, Field(min_length=2, max_length=1000, description="AI 기본법에 대한 질문")],
         ) -> dict[str, Any]:
             """AI 기본법 RAG 에이전트에게 질문하고, 근거 조문이 붙은 답변을 받는다."""
-            with trace_scope(RequestTrace(endpoint="mcp:ask_law")):
-                async with tool_call_scope("AskLaw", channel="mcp"):
+            async with mcp_trace("AskLaw", trace_sink):
+                async with tool_call_scope("AskLaw", channel="mcp", arguments={"question": question}):
                     result = await (await get_answerer()).answer(question)
             return format_answer(result)
 

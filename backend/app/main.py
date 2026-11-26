@@ -225,7 +225,10 @@ def create_app(
         lifespan=lifespan,
     )
     if _env_flag("RAG_MCP_HTTP_ENABLED", True):
-        mcp_server = build_http_server(application.state)
+        mcp_server = build_http_server(
+            application.state,
+            trace_sink=lambda trace: _schedule_trace_write(application, trace),
+        )
         application.router.routes.append(mcp_route(mcp_server))
     report_dir = Path(__file__).resolve().parents[1] / "generated_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
