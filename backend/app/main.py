@@ -1,3 +1,4 @@
+import asyncio
 import time
 import os
 import logging
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 from common.answer_cache import PostgresAnswerCache
 from common.database import create_database_pool
 from common.telemetry import RequestTrace, get_current_trace, trace_scope
+from common.trace_store import PostgresTraceStore, save_trace_safely
 from documents.processor import extract_document
 from rag.graph import LangGraphRAG
 from rag.pipeline import RAGPipeline
@@ -80,6 +82,24 @@ class HealthResponse(BaseModel):
     total_chunks: int
 
 
+TRACED_PATHS = {"/ask", "/documents/extract", "/documents/summarize"}
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.getenv(name, "true" if default else "false").lower() in {"1", "true", "yes", "on"}
+
+
+def _schedule_trace_write(app: FastAPI, trace: RequestTrace) -> None:
+    """응답을 늦추지 않도록 추적 저장은 백그라운드 작업으로 돌린다."""
+    store = getattr(app.state, "trace_store", None)
+    if store is None:
+        return
+    task = asyncio.create_task(save_trace_safely(store, trace))
+    pending = app.state.pending_trace_writes
+    pending.add(task)
+    task.add_done_callback(pending.discard)
+
+
 def _is_uuid(value: str) -> bool:
     try:
         UUID(value)
@@ -130,14 +150,36 @@ def create_app(
                 answer_cache = None
             else:
                 pipeline.answer_cache = answer_cache
+        trace_store = None
+        if _env_flag("RAG_TRACE_STORE_ENABLED", True):
+            trace_store = PostgresTraceStore(
+                create_database_pool(),
+                pipeline_version=os.getenv("RAG_CACHE_VERSION", "conditional-rerank-v10"),
+            )
+            try:
+                await trace_store.open()
+            except Exception as error:
+                logger.warning(
+                    "PostgreSQL 요청 추적 저장소를 사용할 수 없어 기록 없이 시작합니다: %s",
+                    error,
+                )
+                await trace_store.close()
+                trace_store = None
         app.state.pipeline = pipeline
         app.state.rag_graph = LangGraphRAG(pipeline)
+        app.state.trace_store = trace_store
+        app.state.pending_trace_writes = set()
         try:
             yield
         finally:
+            pending = app.state.pending_trace_writes
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             pipeline.close()
             if answer_cache is not None:
                 await answer_cache.close()
+            if trace_store is not None:
+                await trace_store.close()
 
     application = FastAPI(
         title="AI 기본법 근거 기반 QA API",
@@ -184,10 +226,17 @@ def create_app(
                 trace.status = "error"
                 trace.errors.append(type(error).__name__)
                 raise
-            if trace.status == "running":
-                trace.status = "ok" if response.status_code < 400 else f"http_{response.status_code}"
-            response.headers["X-Request-ID"] = trace.request_id
-            return response
+            else:
+                if trace.status == "running":
+                    trace.status = (
+                        "ok" if response.status_code < 400 else f"http_{response.status_code}"
+                    )
+                response.headers["X-Request-ID"] = trace.request_id
+                return response
+            finally:
+                trace.finish()
+                if request.url.path in TRACED_PATHS:
+                    _schedule_trace_write(request.app, trace)
 
     @application.get("/")
     async def root():

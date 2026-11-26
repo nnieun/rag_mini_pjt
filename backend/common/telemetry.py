@@ -27,6 +27,7 @@ class RequestTrace:
     request_id: str = field(default_factory=lambda: str(uuid4()))
     endpoint: str = ""
     started_at: float = field(default_factory=perf_counter)
+    ended_at: float | None = None
     model_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
@@ -74,9 +75,14 @@ class RequestTrace:
             }
         )
 
+    def finish(self) -> None:
+        if self.ended_at is None:
+            self.ended_at = perf_counter()
+
     @property
     def elapsed_ms(self) -> float:
-        return round((perf_counter() - self.started_at) * 1000, 2)
+        end = self.ended_at if self.ended_at is not None else perf_counter()
+        return round((end - self.started_at) * 1000, 2)
 
     def token_totals(self) -> dict[str, int]:
         totals = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}

@@ -113,7 +113,11 @@ class FakeGraph:
 class RequestTraceMiddlewareTest(unittest.TestCase):
     def setUp(self):
         patcher = patch.dict(
-            os.environ, {"RAG_ANSWER_CACHE_ENABLED": "false", "RAG_RERANK_PRELOAD": "false"}
+            os.environ, {
+                "RAG_ANSWER_CACHE_ENABLED": "false",
+                "RAG_RERANK_PRELOAD": "false",
+                "RAG_TRACE_STORE_ENABLED": "false",
+            }
         )
         patcher.start()
         self.addCleanup(patcher.stop)
