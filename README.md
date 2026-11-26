@@ -121,6 +121,10 @@ Retrieval 및 Answer 평가
 | 요청·모델·도구 호출 기록 | 완료 | 요청마다 `request_runs`/`model_calls`/`tool_calls`에 토큰·지연·오류 저장, 응답 `request_id`·`X-Request-ID`로 조회 |
 | 대화 상태 저장 | 완료 | LangGraph Postgres 체크포인터로 `thread_id`별 이전 턴 유지 |
 | PostgreSQL 전체 ERD | 일부 사용 | 실제 사용: `answer_cache`, `request_runs`, `model_calls`, `tool_calls`, LangGraph 체크포인트 테이블. `users`/`chat_sessions`/`rag_runs` 등은 설계만 존재 ([ERD 문서](docs/POSTGRES_ERD.md) 참고) |
+| 도구 레지스트리 | 완료 | `config/tools.json` 허용 목록으로 에이전트·MCP 공통 도구 관리 |
+| MCP 서버 | 완료 | `search_law`/`get_article`/`ask_law`, 조문 리소스, 준수 점검 프롬프트. stdio와 FastAPI `/mcp`(Streamable HTTP) ([MCP 서버](backend/mcp_server/README.md)) |
+| 외부 MCP 도구 사용 | 완료 | `config/mcp_servers.json`의 서버 도구를 에이전트가 선택(langchain-mcp-adapters), 실패한 서버만 제외 |
+| Claude Code 플러그인 | 완료 | `plugin/ai-basic-act`: MCP 연결, `law-citation`·`compliance-check` 스킬, `/law`·`/compliance` ([데모](docs/PLUGIN_DEMO.md)) |
 | 자동 테스트·CI | 완료 | backend unittest, agent-api vitest, frontend 빌드를 GitHub Actions에서 PR마다 실행 |
 | TypeScript Agent API | 완료(별도 서브프로젝트) | `agent-api/` — Claude/OpenAI 공용 Provider, Zod 검증, LLM 판정자-사람 채점 대조, 반복측정 통계 |
 
@@ -131,9 +135,13 @@ rag_mini_pjt/
 ├── .github/
 │   ├── workflows/          # backend, agent-api, frontend CI
 │   └── ISSUE_TEMPLATE/
+├── .claude-plugin/         # Claude Code 마켓플레이스 정의
+├── plugin/ai-basic-act/    # Claude Code 플러그인 (스킬, 커맨드, .mcp.json)
 ├── backend/
 │   ├── app/
 │   ├── common/
+│   ├── config/             # tools.json, mcp_servers.json
+│   ├── mcp_server/         # MCP 서버 (stdio, /mcp)
 │   ├── data/ai_basic_law/
 │   ├── eval/
 │   ├── rag/
@@ -782,14 +790,25 @@ React 프론트엔드는 다음 기능을 제공한다.
 - Answer 품질 평가 문항을 전체 Golden Set으로 확대
 - 배포 환경용 FastAPI·프론트엔드 컨테이너와 CI 구축
 - 스캔 PDF 페이지 이미지 OCR 변환 지원 (현재 텍스트 PDF만 지원, 스캔 PDF는 422)
-- PostgreSQL 요청·모델·도구 사용량 추적 스키마를 애플리케이션에 실제로 연결하고 비용 집계 구현
+- 저장된 모델 호출 토큰으로 비용 집계 구현
 - 업로드 문서 추출 결과의 영구 저장·색인·삭제 수명주기 관리
 
-## 20. 시행착오 목록
+## 20. MCP 서버와 Claude Code 플러그인
+
+법령 검색 도구를 MCP로 열어 Claude Code·Claude Desktop 같은 MCP 클라이언트에서 쓸 수 있게 했다.
+
+- **서버**: `backend/mcp_server`. HTTP API와 같은 `execute_tool`을 거쳐 인자 검증·허용 목록·호출 기록이 동일하다. stdio(`uv run python -m mcp_server`)와 FastAPI `/mcp`(Streamable HTTP, 선택적 Bearer 토큰) 두 가지로 연다.
+- **호출 기록**: MCP 호출은 `tool_calls.channel = 'mcp'`와 인자 SHA-256(`arguments_hash`)으로 저장된다(`004_tool_calls_channel.sql`).
+- **클라이언트**: 반대로 에이전트가 외부 MCP 서버 도구를 쓸 수 있다. `config/mcp_servers.json`에 서버를 적으면 도구가 `서버명_도구명`으로 LLM 도구 선택에 추가된다.
+- **플러그인**: `/plugin marketplace add nnieun/rag_mini_pjt` 후 `/plugin install ai-basic-act@rag-mini-pjt`. 스킬이 조문을 원문으로 확인한 뒤 인용하도록 절차를 고정한다.
+
+자세한 내용: [MCP 서버](backend/mcp_server/README.md), [플러그인](plugin/ai-basic-act/README.md), [데모 시나리오](docs/PLUGIN_DEMO.md)
+
+## 21. 시행착오 목록
 
 - [TRIALS_AND_ERRORS.md](docs/TRIALS_AND_ERRORS.md)
 
-## 21. TypeScript Agent API (agent-api/)
+## 22. TypeScript Agent API (agent-api/)
 
 `backend/`의 Python/LangGraph RAG와 별개로, `agent-api/`에 TypeScript 기반 문서 분류·정보
 추출 에이전트를 구현했다. 서버 프레임워크(Hono/NestJS) 없이 라이브러리/CLI 함수 레벨로
