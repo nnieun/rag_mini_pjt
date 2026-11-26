@@ -57,7 +57,7 @@ class ExternalToolLoadingTest(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("rag.mcp_client", level="WARNING") as logs:
             tools = await load_external_tools(servers, timeout=30)
         names = {tool.name for tool in tools}
-        self.assertEqual(names, {"law_search_law", "law_get_article", "law_get_related_articles", "law_ask_law"})
+        self.assertEqual(names, {"law_search_law", "law_get_article", "law_get_related_articles", "law_ask_law", "law_create_compliance_report"})
         self.assertTrue(any("broken" in line for line in logs.output))
 
         get_article = next(tool for tool in tools if tool.name == "law_get_article")

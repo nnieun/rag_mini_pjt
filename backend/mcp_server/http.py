@@ -67,6 +67,8 @@ def build_http_server(app_state: Any, trace_sink: TraceSink | None = None) -> Fa
         lambda: app_state.pipeline,
         lambda _pipeline: app_state.rag_graph,
         trace_sink=trace_sink,
+        # 앱의 실행 기록·승인·알림을 그대로 쓴다.
+        compliance_factory=lambda _pipeline: app_state.compliance_service,
         streamable_http_path=MCP_PATH,
         stateless_http=True,
         json_response=True,

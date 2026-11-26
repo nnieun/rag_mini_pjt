@@ -115,6 +115,60 @@ def format_answer(result: Any) -> dict[str, Any]:
     }
 
 
+STOPPED = {"awaiting_approval", "completed", "rejected", "failed"}
+
+
+async def wait_for_run(service: Any, run_id: str, *, timeout: float, interval: float = 0.5) -> Any:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        run = await service.get(run_id)
+        if run is None or run.status in STOPPED or loop.time() >= deadline:
+            return run
+        await asyncio.sleep(interval)
+
+
+def compliance_result(run: Any, base_url: str = "") -> dict[str, Any]:
+    assessment = run.assessment or {}
+    applicable = [
+        {"article": item.get("article"), "title": item.get("title"), "applies": item.get("applies")}
+        for item in assessment.get("obligations") or []
+        if item.get("applies") in {"해당", "해당 가능"}
+    ]
+    report = f"{base_url}{run.report_url}" if run.report_url else None
+    messages = {
+        "completed": "점검이 끝났고 PDF 보고서가 만들어졌습니다.",
+        "awaiting_approval": (
+            "사람 검토가 필요해 PDF 보고서는 승인 후 만들어집니다. 웹 화면의 준수 점검 탭, Discord "
+            f"/review {run.id}, 또는 POST /agents/compliance/runs/{run.id}/approve로 승인할 수 있습니다."
+        ),
+        "rejected": "검토자가 반려했습니다.",
+        "failed": f"점검이 실패했습니다({run.error_code}).",
+    }
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "message": messages.get(run.status, "점검이 아직 진행 중입니다. 잠시 뒤 run_id로 다시 확인하세요."),
+        "high_impact": assessment.get("high_impact"),
+        "high_impact_categories": assessment.get("high_impact_categories") or [],
+        "confidence": assessment.get("confidence"),
+        "applicable_obligations": applicable,
+        "review_reasons": (run.review_request or {}).get("reasons") or [],
+        "summary": assessment.get("summary") or "",
+        "report_url": report,
+        "disclaimer": assessment.get("disclaimer") or "법률 자문이 아닙니다.",
+    }
+
+
+def default_compliance_service(pipeline: Any) -> Any:
+    from agents.compliance_graph import ComplianceAgent
+    from agents.compliance_report import report_on_completion
+    from agents.compliance_runs import ComplianceService, InMemoryComplianceRunStore
+
+    agent = ComplianceAgent(pipeline)
+    return ComplianceService(agent, InMemoryComplianceRunStore(), on_finished=report_on_completion(agent))
+
+
 def format_article(document: dict) -> dict[str, str]:
     content = str(document.get("content") or "")
     return {
@@ -155,12 +209,17 @@ def build_server(
     answerer_factory: Callable[[Any], Any] | None = None,
     *,
     trace_sink: TraceSink | None = None,
+    compliance_factory: Callable[[Any], Any] | None = None,
+    public_base_url: str | None = None,
+    compliance_wait_seconds: float = 240.0,
     **settings: Any,
 ) -> FastMCP:
     """Build the MCP server.
 
     `answerer_factory(pipeline)` must return an object with
     `async answer(question) -> AnswerResult`; by default it is `LangGraphRAG`.
+    `compliance_factory(pipeline)` returns the `ComplianceService` used by
+    `create_compliance_report`; by default a service with an in-memory run store.
     `trace_sink(trace)` receives every finished tool-call trace (for example to save it
     in PostgreSQL); it may be sync or async and must not raise.
     Extra keyword arguments go to `FastMCP` (for example the HTTP transport settings).
@@ -277,6 +336,40 @@ def build_server(
     )
     def compliance_check(service_description: str) -> str:
         return COMPLIANCE_PROMPT.format(service_description=service_description)
+
+    if compliance_factory is None:
+
+        def compliance_factory(loaded: Any) -> Any:
+            return default_compliance_service(loaded)
+
+    compliance_box: dict[str, Any] = {}
+    compliance_lock = asyncio.Lock()
+
+    async def get_compliance() -> Any:
+        if "value" not in compliance_box:
+            async with compliance_lock:
+                if "value" not in compliance_box:
+                    compliance_box["value"] = compliance_factory(await pipeline.get())
+        return compliance_box["value"]
+
+    base_url = (public_base_url if public_base_url is not None else os.getenv("PUBLIC_BASE_URL", "")).rstrip("/")
+
+    if _env_flag("RAG_MCP_COMPLIANCE_ENABLED", True):
+
+        @server.tool()
+        async def create_compliance_report(
+            service_description: Annotated[
+                str, Field(min_length=10, max_length=20000, description="점검할 AI 서비스 설명")
+            ],
+        ) -> dict[str, Any]:
+            """AI 서비스 설명으로 AI 기본법 준수 점검 에이전트를 실행하고 판정과 PDF 보고서 링크를 받는다.
+            고영향 인공지능이거나 신뢰도가 낮으면 사람 승인 전까지 PDF가 만들어지지 않고 awaiting_approval을 돌려준다."""
+            async with mcp_trace("CreateComplianceReport", trace_sink):
+                async with tool_call_scope("CreateComplianceReport", channel="mcp", arguments={"service_description": service_description}):
+                    service = await get_compliance()
+                    run = await service.create_run(service_description, source_type="mcp")
+                    run = await wait_for_run(service, run.id, timeout=compliance_wait_seconds)
+            return compliance_result(run, base_url)
 
     server.pipeline = pipeline  # type: ignore[attr-defined]
     return server
