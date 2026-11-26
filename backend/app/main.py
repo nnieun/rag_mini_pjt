@@ -12,9 +12,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from common.answer_cache import PostgresAnswerCache
-from common.database import create_database_pool
+from common.database import create_checkpoint_pool, create_database_pool
 from documents.processor import extract_document
-from rag.graph import LangGraphRAG
+from rag.graph import LangGraphRAG, checkpoint_serde
 from rag.pipeline import RAGPipeline
 from rag.retry import retry_rate_limit
 from rag.schemas import ConversationHistoryItem
@@ -79,6 +79,28 @@ class HealthResponse(BaseModel):
     total_chunks: int
 
 
+async def open_checkpointer():
+    """thread_id별 대화 상태를 PostgreSQL에 저장하는 체크포인터를 연다.
+
+    DB를 쓸 수 없으면 (None, None)을 돌려주고, 이때 후속 질문은 요청의 history로만 처리한다.
+    """
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+    pool = create_checkpoint_pool()
+    try:
+        await pool.open(wait=True, timeout=5.0)
+        checkpointer = AsyncPostgresSaver(pool, serde=checkpoint_serde())
+        await checkpointer.setup()
+    except Exception as error:
+        logger.warning(
+            "LangGraph 체크포인터를 사용할 수 없어 history 기반 대화만 지원합니다: %s",
+            error,
+        )
+        await pool.close()
+        return None, None
+    return pool, checkpointer
+
+
 def get_pipeline(request: Request) -> RAGPipeline:
     return request.app.state.pipeline
 
@@ -121,14 +143,20 @@ def create_app(
                 answer_cache = None
             else:
                 pipeline.answer_cache = answer_cache
+        checkpoint_pool = None
+        checkpointer = None
+        if os.getenv("RAG_CHECKPOINT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
+            checkpoint_pool, checkpointer = await open_checkpointer()
         app.state.pipeline = pipeline
-        app.state.rag_graph = LangGraphRAG(pipeline)
+        app.state.rag_graph = LangGraphRAG(pipeline, checkpointer=checkpointer)
         try:
             yield
         finally:
             pipeline.close()
             if answer_cache is not None:
                 await answer_cache.close()
+            if checkpoint_pool is not None:
+                await checkpoint_pool.close()
 
     application = FastAPI(
         title="AI 기본법 근거 기반 QA API",

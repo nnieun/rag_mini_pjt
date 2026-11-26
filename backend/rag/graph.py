@@ -1,9 +1,10 @@
 """LangGraph orchestration for extraction, tool selection, RAG and validation."""
 
 import asyncio
+import operator
 import os
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
@@ -36,6 +37,38 @@ class RAGGraphState(TypedDict, total=False):
     answer_result: AnswerResult
     validation_errors: list[str]
     artifact_url: str
+    # 체크포인터가 있으면 thread_id별로 대화 턴이 누적된다(append reducer).
+    turns: Annotated[list[dict[str, Any]], operator.add]
+
+
+MAX_REMEMBERED_TURNS = 3
+
+
+def checkpoint_serde():
+    """체크포인트에 들어가는 우리 dataclass만 역직렬화를 허용하는 직렬화기."""
+    from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
+
+    return JsonPlusSerializer(
+        allowed_msgpack_modules=[("rag.models", "AnswerResult"), ("rag.models", "Source")]
+    )
+
+# 매 질문마다 초기화해야 하는 필드. 체크포인터는 이전 턴의 최종 상태를 이어받으므로
+# 여기서 비우지 않으면 이전 턴의 artifact_url·documents 등이 다음 턴 라우팅에 섞인다.
+TURN_RESET: dict[str, Any] = {
+    "standalone_question": "",
+    "cache_question": "",
+    "rewritten_question": "",
+    "analysis": {},
+    "use_reranking": False,
+    "tool_name": "",
+    "tool_arguments": {},
+    "documents": [],
+    "relevance": 0.0,
+    "retrieval_retries": 0,
+    "answer_retries": 0,
+    "validation_errors": [],
+    "artifact_url": "",
+}
 
 
 def _rule_analysis(question: str) -> RequestAnalysis:
@@ -105,9 +138,10 @@ def grade_answer(answer: str, source_count: int) -> bool:
     return source_count > 0 and bool(re.search(r"\[S\d+\]", answer))
 
 
-def build_rag_graph(pipeline: RAGPipeline):
+def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
     async def resolve_follow_up(state: RAGGraphState) -> dict[str, Any]:
-        history = state.get("history", [])[-3:]
+        # 클라이언트가 보낸 history가 우선이고, 없으면 체크포인트에 남은 이전 턴을 쓴다.
+        history = (state.get("history") or state.get("turns") or [])[-MAX_REMEMBERED_TURNS:]
         question = state["question"].strip()
         if not history:
             return {"standalone_question": question, "cache_question": question}
@@ -227,7 +261,7 @@ def build_rag_graph(pipeline: RAGPipeline):
     async def run_tool(state: RAGGraphState) -> dict[str, Any]:
         if state["tool_name"] == "CreatePdf":
             args = CreatePdf.model_validate(state["tool_arguments"])
-            history = state.get("history", [])
+            history = state.get("history") or state.get("turns") or []
             if not history:
                 raise ValueError("PDF로 만들 이전 답변이 없습니다.")
             latest = history[-1]
@@ -309,6 +343,20 @@ def build_rag_graph(pipeline: RAGPipeline):
             "use_reranking": True,
         }
 
+    async def remember(state: RAGGraphState) -> dict[str, Any]:
+        result = state.get("answer_result")
+        if result is None or state.get("artifact_url"):
+            return {}
+        return {
+            "turns": [
+                {
+                    "question": state["question"],
+                    "answer": result.answer[:8000],
+                    "source_articles": [source.article for source in result.sources],
+                }
+            ]
+        }
+
     builder = StateGraph(RAGGraphState)
     builder.add_node("resolve_follow_up", resolve_follow_up)
     builder.add_node("analyze_and_select_tool", analyze)
@@ -318,6 +366,7 @@ def build_rag_graph(pipeline: RAGPipeline):
     builder.add_node("generate", generate)
     builder.add_node("validate", validate)
     builder.add_node("prepare_retry", prepare_retry)
+    builder.add_node("remember", remember)
     builder.add_edge(START, "resolve_follow_up")
     builder.add_edge("resolve_follow_up", "analyze_and_select_tool")
     builder.add_edge("analyze_and_select_tool", "execute_tool")
@@ -331,19 +380,25 @@ def build_rag_graph(pipeline: RAGPipeline):
         },
     )
     builder.add_edge("artifact_response", END)
+    builder.add_edge("remember", END)
     builder.add_edge("rewrite_query", "execute_tool")
     builder.add_edge("generate", "validate")
     builder.add_conditional_edges(
-        "validate", route_validation, {"retry": "prepare_retry", "end": END}
+        "validate", route_validation, {"retry": "prepare_retry", "end": "remember"}
     )
     builder.add_edge("prepare_retry", "generate")
-    return builder.compile()
+    return builder.compile(checkpointer=checkpointer)
 
 
 class LangGraphRAG:
-    def __init__(self, pipeline: RAGPipeline):
+    def __init__(self, pipeline: RAGPipeline, checkpointer: Any | None = None):
         self.pipeline = pipeline
         self.graph = build_rag_graph(pipeline)
+        # thread_id가 있는 요청만 체크포인터 그래프를 쓴다. 없는 요청까지 저장하면
+        # 일회성 thread가 체크포인트 테이블에 쌓인다.
+        self.memory_graph = (
+            build_rag_graph(pipeline, checkpointer) if checkpointer is not None else None
+        )
         self.timeout_seconds = float(os.getenv("RAG_GRAPH_TIMEOUT_SECONDS", "120"))
 
     async def answer(
@@ -354,17 +409,18 @@ class LangGraphRAG:
         history: list[dict[str, Any]] | None = None,
         thread_id: str | None = None,
     ) -> AnswerResult:
-        state = await asyncio.wait_for(
-            self.graph.ainvoke(
-                {
-                    "question": question,
-                    "bypass_cache": bypass_cache,
-                    "history": history or [],
-                    "thread_id": thread_id or "",
-                    "retrieval_retries": 0,
-                    "answer_retries": 0,
-                }
-            ),
-            timeout=self.timeout_seconds,
-        )
+        turn_input = {
+            **TURN_RESET,
+            "question": question,
+            "bypass_cache": bypass_cache,
+            "history": history or [],
+            "thread_id": thread_id or "",
+        }
+        if thread_id and self.memory_graph is not None:
+            run = self.memory_graph.ainvoke(
+                turn_input, config={"configurable": {"thread_id": thread_id}}
+            )
+        else:
+            run = self.graph.ainvoke(turn_input)
+        state = await asyncio.wait_for(run, timeout=self.timeout_seconds)
         return state["answer_result"]
