@@ -1,5 +1,16 @@
 # AI 기본법 RAG PostgreSQL ERD
 
+> **현재 사용 현황 (M1 기준)**
+>
+> | 테이블 | 상태 | 쓰는 곳 |
+> |---|---|---|
+> | `answer_cache` | 사용 중 | `backend/common/answer_cache.py` |
+> | `request_runs`, `model_calls`, `tool_calls` | 사용 중 | `backend/common/trace_store.py` (`003_observability.sql`) |
+> | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`, `checkpoint_migrations` | 사용 중 | LangGraph `AsyncPostgresSaver`가 자동 생성 |
+> | `users`, `chat_sessions`, `messages`, `rag_runs`, `retrieval_results`, `answer_sources`, `answer_evaluations` 등 아래 ERD의 나머지 | 설계만 존재 | 대화 기록은 현재 체크포인터가 대신한다 |
+>
+> 아래 ERD는 전체 서비스로 확장할 때의 목표 설계다.
+
 ## 1. 저장소 역할
 
 | 저장소 | 역할 |
