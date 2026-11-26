@@ -37,4 +37,16 @@ jobs:
         env:
           RAG_ANSWER_CACHE_ENABLED: "false"
           RAG_RERANK_PRELOAD: "false"
+          RAG_CHECKPOINT_ENABLED: "false"
+          RAG_TRACE_STORE_ENABLED: "false"
         run: uv run python -m unittest discover -s tests -v
+
+      - name: MCP server tests
+        # 도구 목록, 정상 호출, 스키마 오류(isError), 미허용 도구, /mcp HTTP, stdio 서브프로세스.
+        # 위 단계에도 포함되지만, 실패했을 때 MCP 문제인지 바로 보이도록 따로 돌린다.
+        env:
+          RAG_ANSWER_CACHE_ENABLED: "false"
+          RAG_RERANK_PRELOAD: "false"
+          RAG_CHECKPOINT_ENABLED: "false"
+          RAG_TRACE_STORE_ENABLED: "false"
+        run: uv run python -m unittest tests.test_mcp_server tests.test_mcp_http tests.test_mcp_stdio -v
