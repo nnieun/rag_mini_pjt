@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from common.telemetry import tool_call_scope
 from rag.schemas import GetArticle, SearchLaw
 
 
@@ -29,14 +30,15 @@ async def execute_tool(
     *,
     use_reranking: bool = False,
 ) -> list[dict]:
-    if name not in ALLOWED_TOOLS:
-        raise ValueError(f"허용되지 않은 도구입니다: {name}")
-    if name == "GetArticle":
-        args = GetArticle.model_validate(arguments)
-        return exact_article_results(pipeline.retriever, args.article_number)
-    args = SearchLaw.model_validate(arguments)
-    return await pipeline.retrieve(
-        args.query,
-        k=args.top_k,
-        use_reranking=use_reranking,
-    )
+    async with tool_call_scope(name):
+        if name not in ALLOWED_TOOLS:
+            raise ValueError(f"허용되지 않은 도구입니다: {name}")
+        if name == "GetArticle":
+            args = GetArticle.model_validate(arguments)
+            return exact_article_results(pipeline.retriever, args.article_number)
+        args = SearchLaw.model_validate(arguments)
+        return await pipeline.retrieve(
+            args.query,
+            k=args.top_k,
+            use_reranking=use_reranking,
+        )

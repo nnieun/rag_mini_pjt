@@ -1,8 +1,9 @@
+import asyncio
 import time
 import os
 import logging
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from common.answer_cache import PostgresAnswerCache
 from common.database import create_checkpoint_pool, create_database_pool
+from common.telemetry import RequestTrace, get_current_trace, trace_scope
+from common.trace_store import PostgresTraceStore, save_trace_safely
 from documents.processor import extract_document
 from rag.graph import LangGraphRAG, checkpoint_serde
 from rag.pipeline import RAGPipeline
@@ -77,6 +80,32 @@ class HealthResponse(BaseModel):
     collection: str
     searchable_chunks: int
     total_chunks: int
+
+
+TRACED_PATHS = {"/ask", "/documents/extract", "/documents/summarize"}
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    return os.getenv(name, "true" if default else "false").lower() in {"1", "true", "yes", "on"}
+
+
+def _schedule_trace_write(app: FastAPI, trace: RequestTrace) -> None:
+    """응답을 늦추지 않도록 추적 저장은 백그라운드 작업으로 돌린다."""
+    store = getattr(app.state, "trace_store", None)
+    if store is None:
+        return
+    task = asyncio.create_task(save_trace_safely(store, trace))
+    pending = app.state.pending_trace_writes
+    pending.add(task)
+    task.add_done_callback(pending.discard)
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+    except ValueError:
+        return False
+    return True
 
 
 async def open_checkpointer():
@@ -145,16 +174,38 @@ def create_app(
                 pipeline.answer_cache = answer_cache
         checkpoint_pool = None
         checkpointer = None
-        if os.getenv("RAG_CHECKPOINT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
+        if _env_flag("RAG_CHECKPOINT_ENABLED", True):
             checkpoint_pool, checkpointer = await open_checkpointer()
+        trace_store = None
+        if _env_flag("RAG_TRACE_STORE_ENABLED", True):
+            trace_store = PostgresTraceStore(
+                create_database_pool(),
+                pipeline_version=os.getenv("RAG_CACHE_VERSION", "conditional-rerank-v10"),
+            )
+            try:
+                await trace_store.open()
+            except Exception as error:
+                logger.warning(
+                    "PostgreSQL 요청 추적 저장소를 사용할 수 없어 기록 없이 시작합니다: %s",
+                    error,
+                )
+                await trace_store.close()
+                trace_store = None
         app.state.pipeline = pipeline
         app.state.rag_graph = LangGraphRAG(pipeline, checkpointer=checkpointer)
+        app.state.trace_store = trace_store
+        app.state.pending_trace_writes = set()
         try:
             yield
         finally:
+            pending = app.state.pending_trace_writes
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             pipeline.close()
             if answer_cache is not None:
                 await answer_cache.close()
+            if trace_store is not None:
+                await trace_store.close()
             if checkpoint_pool is not None:
                 await checkpoint_pool.close()
 
@@ -184,8 +235,36 @@ def create_app(
         allow_origins=allowed_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "OPTIONS"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "X-Request-ID"],
+        expose_headers=["X-Request-ID"],
     )
+
+    @application.middleware("http")
+    async def request_trace_middleware(request: Request, call_next):
+        """요청마다 RequestTrace를 열어 LLM·도구 호출을 모은다."""
+        incoming = request.headers.get("x-request-id", "")
+        trace = RequestTrace(endpoint=request.url.path)
+        if _is_uuid(incoming):
+            trace.request_id = incoming
+        with trace_scope(trace):
+            request.state.trace = trace
+            try:
+                response = await call_next(request)
+            except Exception as error:
+                trace.status = "error"
+                trace.errors.append(type(error).__name__)
+                raise
+            else:
+                if trace.status == "running":
+                    trace.status = (
+                        "ok" if response.status_code < 400 else f"http_{response.status_code}"
+                    )
+                response.headers["X-Request-ID"] = trace.request_id
+                return response
+            finally:
+                trace.finish()
+                if request.url.path in TRACED_PATHS:
+                    _schedule_trace_write(request.app, trace)
 
     @application.get("/")
     async def root():
@@ -213,6 +292,7 @@ def create_app(
         pipeline: RAGPipeline = Depends(get_pipeline),
     ) -> AskResponse:
         started = time.perf_counter()
+        trace = get_current_trace() or RequestTrace(endpoint="/ask")
         try:
             result = await request.app.state.rag_graph.answer(
                 payload.question,
@@ -221,18 +301,25 @@ def create_app(
                 thread_id=payload.thread_id,
             )
         except ValueError as error:
+            trace.status = "invalid_request"
+            trace.errors.append(type(error).__name__)
             raise HTTPException(status_code=422, detail=str(error)) from error
         except Exception as error:
+            trace.status = "error"
+            trace.errors.append(type(error).__name__)
             raise HTTPException(
                 status_code=502,
                 detail=f"RAG 처리 중 오류가 발생했습니다: {error}",
             ) from error
 
+        status = "insufficient_evidence" if not result.sources else "answered"
+        trace.status = status
+        trace.cache_hit = result.cache_hit
         return AskResponse(
             **result.as_dict(),
             elapsed_ms=round((time.perf_counter() - started) * 1000, 2),
-            status=("insufficient_evidence" if not result.sources else "answered"),
-            request_id=str(uuid4()),
+            status=status,
+            request_id=trace.request_id,
         )
 
     @application.post("/documents/extract", response_model=DocumentResponse)

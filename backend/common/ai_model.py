@@ -1,13 +1,12 @@
 from langchain_openai import ChatOpenAI
 from langchain_openai import OpenAIEmbeddings
 
+from common.telemetry import trace_callback_handler
 from common.config import (
     API_KEY,
     BASE_URL,
     EMBEDDING_MODEL,
     MODEL,
-    TEMPERATURE,
-    MAX_TOKENS
 )
 
 def get_llm_model(
@@ -26,6 +25,8 @@ def get_llm_model(
         temperature=temperature,
         use_responses_api=False,  # base url로 할 때는 이부분 넣어야 함.(MonoRouter 사용)
         max_tokens=max_tokens,
+        # 요청 범위 RequestTrace에 모든 호출의 토큰·지연을 기록한다.
+        callbacks=[trace_callback_handler],
     )
 
 

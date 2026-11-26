@@ -16,6 +16,7 @@ from rag.schemas import CreatePdf, FollowUpResolution, GetArticle, RequestAnalys
 from rag.tools import execute_tool
 from rag.validators import validate_answer
 from documents.pdf_report import create_answer_pdf
+from common.telemetry import tool_call_scope
 
 
 class RAGGraphState(TypedDict, total=False):
@@ -265,13 +266,14 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
             if not history:
                 raise ValueError("PDF로 만들 이전 답변이 없습니다.")
             latest = history[-1]
-            _, url = create_answer_pdf(
-                title=args.title,
-                question=str(latest.get("question", "")),
-                answer=str(latest.get("answer", "")),
-                source_articles=list(latest.get("source_articles", [])),
-                include_sources=args.include_sources,
-            )
+            async with tool_call_scope("CreatePdf"):
+                _, url = create_answer_pdf(
+                    title=args.title,
+                    question=str(latest.get("question", "")),
+                    answer=str(latest.get("answer", "")),
+                    source_articles=list(latest.get("source_articles", [])),
+                    include_sources=args.include_sources,
+                )
             return {"artifact_url": url, "documents": [], "relevance": 1.0}
         documents = await execute_tool(
             pipeline,
