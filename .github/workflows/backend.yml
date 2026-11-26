@@ -1,0 +1,40 @@
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths: ["backend/**", ".github/workflows/backend.yml"]
+  pull_request:
+    paths: ["backend/**", ".github/workflows/backend.yml"]
+
+defaults:
+  run:
+    working-directory: backend
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: Lint (ruff)
+        run: uvx ruff check .
+
+      - name: Unit tests
+        # LLM, Qdrant, PostgreSQL는 테스트에서 모두 모킹한다. 실제 키가 필요 없다.
+        env:
+          RAG_ANSWER_CACHE_ENABLED: "false"
+          RAG_RERANK_PRELOAD: "false"
+        run: uv run python -m unittest discover -s tests -v
