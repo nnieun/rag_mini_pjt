@@ -3000,6 +3000,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "ipykernel" },
     { name = "jupyter" },
     { name = "langchain-mcp-adapters" },
@@ -3028,6 +3029,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.142.2" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "ipykernel", specifier = ">=7.4.0" },
     { name = "jupyter", specifier = ">=1.1.1" },
     { name = "langchain-mcp-adapters", specifier = ">=0.1" },

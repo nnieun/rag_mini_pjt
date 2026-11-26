@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agents.compliance_graph import ComplianceAgent
-from agents.compliance_report import report_on_completion
+from agents.compliance_report import chain_hooks, notify_on_finish, report_on_completion
 from agents.compliance_runs import (
     ComplianceService,
     InMemoryComplianceRunStore,
@@ -21,6 +21,7 @@ from agents.compliance_runs import (
 )
 from app.compliance_api import router as compliance_router
 from common.answer_cache import PostgresAnswerCache
+from common.notifier import notifier_from_env
 from common.database import create_checkpoint_pool, create_database_pool
 from common.telemetry import RequestTrace, get_current_trace, trace_scope
 from common.trace_store import PostgresTraceStore, save_trace_safely
@@ -233,7 +234,12 @@ def create_app(
         app.state.compliance_service = ComplianceService(
             compliance_agent,
             compliance_store,
-            on_finished=report_on_completion(compliance_agent),
+            on_finished=chain_hooks(
+                report_on_completion(compliance_agent),
+                notify_on_finish(
+                    notifier_from_env(), public_base_url=os.getenv("PUBLIC_BASE_URL", "")
+                ),
+            ),
             trace_sink=lambda trace: _schedule_trace_write(app, trace),
         )
         app.state.pending_trace_writes = set()

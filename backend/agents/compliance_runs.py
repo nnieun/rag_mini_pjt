@@ -305,7 +305,7 @@ class ComplianceService:
     async def _finish(self, run: ComplianceRun, status: str) -> None:
         if self.on_finished is not None:
             try:
-                changes = await self.on_finished(run, status)
+                changes = await self._traced("compliance:finish", self.on_finished(run, status))
                 for key, value in (changes or {}).items():
                     setattr(run, key, value)
             except Exception as error:
