@@ -318,3 +318,63 @@ button { border: 0; cursor: pointer; }
 @media (max-width: 390px) {
   .composer > span { right: 58px; }
 }
+
+/* 준수 점검 탭 */
+.compliance-panel { padding-bottom: 60px; }
+.compliance-form { display: grid; gap: 10px; margin-top: 18px; padding: 18px; border: 1px solid #dfe5ed; border-radius: 12px; background: #fff; }
+.compliance-form label[for] { font-weight: 600; font-size: 14px; }
+.compliance-form textarea { width: 100%; resize: vertical; padding: 12px; border: 1px solid #cfd8e3; border-radius: 8px; font: inherit; line-height: 1.6; }
+.compliance-form textarea:disabled { background: #f1f4f8; }
+.compliance-form-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.compliance-file { flex: 1; min-width: 220px; font-size: 13px; color: #4a5a6e; cursor: pointer; }
+.compliance-file input { display: none; }
+.compliance-link { font-size: 13px; color: #1f5fbf; text-decoration: underline; }
+.compliance-submit { display: inline-flex; align-items: center; padding: 9px 18px; border-radius: 8px; background: #1f3b5c; color: #fff; font-weight: 600; font-size: 14px; }
+.compliance-submit:disabled { opacity: .45; cursor: not-allowed; }
+.compliance-progress { margin-top: 18px; padding: 16px 18px; border: 1px solid #dfe5ed; border-radius: 12px; background: #fff; }
+.compliance-status { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; color: #6b7a8c; }
+.compliance-badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; background: #e8edf3; color: #1f3b5c; }
+.compliance-badge.status-awaiting_approval { background: #fff4d6; color: #8a5a00; }
+.compliance-badge.status-completed { background: #e3f4e6; color: #1f6b2c; }
+.compliance-badge.status-rejected, .compliance-badge.status-failed { background: #fde8e8; color: #9b1c1c; }
+.compliance-progress ol { display: grid; gap: 6px; padding-left: 0; list-style: none; }
+.compliance-progress li { display: flex; gap: 10px; font-size: 14px; }
+.compliance-progress li::before { content: "✓"; width: 16px; color: #2e7d32; }
+.compliance-progress li.step-active::before { content: "…"; color: #1f5fbf; }
+.compliance-progress li.step-error::before { content: "!"; color: #c62828; }
+.compliance-progress li span { color: #6b7a8c; }
+.compliance-error { margin-top: 8px; color: #9b1c1c; }
+.compliance-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 18px; }
+.compliance-summary > div { padding: 14px; border: 1px solid #dfe5ed; border-radius: 10px; background: #fff; }
+.compliance-summary span { display: block; font-size: 12px; color: #6b7a8c; }
+.compliance-summary strong { font-size: 18px; }
+.compliance-summary p { grid-column: 1 / -1; line-height: 1.7; }
+.compliance-review { margin-top: 18px; padding: 16px 18px; border: 1px solid #f2d27a; border-radius: 12px; background: #fffaf0; }
+.compliance-review h2, .compliance-table-section h2 { margin-bottom: 8px; font-size: 16px; font-weight: 700; }
+.compliance-review-fields { display: grid; grid-template-columns: 1fr 2fr; gap: 8px; margin: 10px 0; }
+.compliance-review-fields input { padding: 8px 10px; border: 1px solid #cfd8e3; border-radius: 8px; background: #fff; }
+.compliance-review-actions { display: flex; gap: 8px; }
+.compliance-review-actions button { padding: 8px 18px; border-radius: 8px; font-weight: 600; color: #fff; }
+.compliance-review-actions .approve { background: #2e7d32; }
+.compliance-review-actions .reject { background: #9b1c1c; }
+.compliance-review-actions button:disabled { opacity: .5; }
+.compliance-table-section { margin-top: 22px; }
+.compliance-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+.compliance-table th, .compliance-table td { padding: 7px 10px; border: 1px solid #dfe5ed; text-align: left; }
+.compliance-table th { background: #eef2f7; }
+.compliance-table tr.hit td { background: #fff4d6; font-weight: 600; }
+.obligation-list { display: grid; gap: 8px; padding: 0; list-style: none; }
+.obligation-list li { padding: 10px 12px; border: 1px solid #dfe5ed; border-radius: 10px; background: #fff; }
+.obligation-list li.not-applies { opacity: .6; }
+.obligation-list label { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.obligation-article { font-weight: 700; }
+.obligation-title { flex: 1; }
+.obligation-applies { padding: 2px 8px; border-radius: 999px; font-size: 12px; background: #e8edf3; }
+.obligation-applies.applies-해당 { background: #e3f4e6; color: #1f6b2c; }
+.obligation-applies.applies-해당-가능 { background: #fff4d6; color: #8a5a00; }
+.obligation-list p { margin: 6px 0 0 24px; font-size: 13px; color: #4a5a6e; }
+.obligation-list small { margin-left: 24px; color: #6b7a8c; }
+.assumption-list { padding-left: 18px; list-style: disc; font-size: 14px; line-height: 1.7; }
+.compliance-footer { display: grid; gap: 10px; margin-top: 24px; font-size: 13px; color: #6b7a8c; }
+.compliance-footer .compliance-submit { justify-self: start; }
+@media (max-width: 760px) { .compliance-summary { grid-template-columns: 1fr; } .compliance-review-fields { grid-template-columns: 1fr; } }
