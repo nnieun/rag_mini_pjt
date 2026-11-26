@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from uuid import UUID
 from collections.abc import Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,7 @@ from common.database import create_checkpoint_pool, create_database_pool
 from common.telemetry import RequestTrace, get_current_trace, trace_scope
 from common.trace_store import PostgresTraceStore, save_trace_safely
 from documents.processor import extract_document
+from mcp_server.http import build_http_server, mcp_route
 from rag.graph import LangGraphRAG, checkpoint_serde
 from rag.pipeline import RAGPipeline
 from rag.retry import retry_rate_limit
@@ -137,6 +138,8 @@ def get_pipeline(request: Request) -> RAGPipeline:
 def create_app(
     pipeline_factory: Callable[[], RAGPipeline] = RAGPipeline.create_default,
 ) -> FastAPI:
+    mcp_server = None
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pipeline = pipeline_factory()
@@ -196,7 +199,10 @@ def create_app(
         app.state.trace_store = trace_store
         app.state.pending_trace_writes = set()
         try:
-            yield
+            async with AsyncExitStack() as stack:
+                if mcp_server is not None:
+                    await stack.enter_async_context(mcp_server.session_manager.run())
+                yield
         finally:
             pending = app.state.pending_trace_writes
             if pending:
@@ -218,6 +224,9 @@ def create_app(
         ),
         lifespan=lifespan,
     )
+    if _env_flag("RAG_MCP_HTTP_ENABLED", True):
+        mcp_server = build_http_server(application.state)
+        application.router.routes.append(mcp_route(mcp_server))
     report_dir = Path(__file__).resolve().parents[1] / "generated_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     application.mount("/reports", StaticFiles(directory=report_dir), name="reports")

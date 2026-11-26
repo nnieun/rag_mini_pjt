@@ -133,11 +133,13 @@ async def run_traced(name: str, arguments: dict, pipeline: Any, **kwargs: Any) -
 def build_server(
     pipeline_factory: Callable[[], Any] | None = None,
     answerer_factory: Callable[[Any], Any] | None = None,
+    **settings: Any,
 ) -> FastMCP:
     """Build the MCP server.
 
     `answerer_factory(pipeline)` must return an object with
     `async answer(question) -> AnswerResult`; by default it is `LangGraphRAG`.
+    Extra keyword arguments go to `FastMCP` (for example the HTTP transport settings).
     """
     if pipeline_factory is None:
         from rag.pipeline import RAGPipeline
@@ -162,7 +164,7 @@ def build_server(
         return answerer_box["value"]
 
     allowed = allowed_tools()
-    server = FastMCP("ai-basic-act", instructions=SERVER_INSTRUCTIONS)
+    server = FastMCP("ai-basic-act", instructions=SERVER_INSTRUCTIONS, **settings)
 
     if "SearchLaw" in allowed:
 
