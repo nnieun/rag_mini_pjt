@@ -6,8 +6,6 @@ from common.config import (
     BASE_URL,
     EMBEDDING_MODEL,
     MODEL,
-    TEMPERATURE,
-    MAX_TOKENS
 )
 
 def get_llm_model(
