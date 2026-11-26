@@ -1,0 +1,18 @@
+{
+  "name": "rag-mini-pjt",
+  "owner": {
+    "name": "nnieun"
+  },
+  "metadata": {
+    "description": "AI 기본법 RAG 프로젝트의 Claude Code 플러그인"
+  },
+  "plugins": [
+    {
+      "name": "ai-basic-act",
+      "source": "./plugin/ai-basic-act",
+      "description": "AI 기본법 원문 검색·조문 인용·준수 점검 (MCP 서버 + 스킬 + 커맨드)",
+      "version": "0.1.0",
+      "category": "productivity"
+    }
+  ]
+}

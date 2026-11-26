@@ -1,0 +1,11 @@
+{
+  "name": "ai-basic-act",
+  "version": "0.1.0",
+  "description": "AI 기본법(인공지능 발전과 신뢰 기반 조성 등에 관한 기본법) 원문 검색·조문 인용·준수 점검 도구",
+  "author": {
+    "name": "nnieun"
+  },
+  "homepage": "https://github.com/nnieun/rag_mini_pjt",
+  "repository": "https://github.com/nnieun/rag_mini_pjt",
+  "keywords": ["law", "korea", "ai-basic-act", "rag", "mcp", "compliance"]
+}

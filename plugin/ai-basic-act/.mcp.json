@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "ai-basic-act": {
+      "type": "http",
+      "url": "${AI_BASIC_ACT_MCP_URL:-http://localhost:8000/mcp}",
+      "headers": {
+        "Authorization": "Bearer ${AI_BASIC_ACT_MCP_TOKEN:-}"
+      }
+    }
+  }
+}
