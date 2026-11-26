@@ -1,6 +1,9 @@
 """Compliance agent: service description -> AI Basic Act obligations.
 
-Graph: ingest -> profile -> agent <-> tools -> assess -> END
+Graph: ingest -> profile -> agent <-> tools -> assess -> validate
+       validate -(citation errors, once)-> assess
+       validate -(high impact or low confidence)-> human_review (interrupt) -> END
+       validate -> finalize -> END
 
 - ingest: normalize the description (text or extracted document text).
 - profile: structured extraction of a `ServiceProfile`.
@@ -9,17 +12,24 @@ Graph: ingest -> profile -> agent <-> tools -> assess -> END
   chunk gets a stable source id (S1, S2, ...) that the assessment must cite.
 - assess: structured `ComplianceAssessment` from the profile and the sources. If
   the LLM cannot produce one, a rule-based assessment from the profile is used.
+- validate: every applicable obligation must cite at least one known source id.
+  On failure the assessment is regenerated once with the errors as feedback.
+- human_review: high-impact results, confidence below 0.7 and unresolved citation
+  errors stop at `interrupt()` until a person approves or rejects (needs a
+  checkpointer; `ComplianceAgent` uses an in-memory one by default).
 """
 
 import json
 import logging
 import operator
 import re
+import uuid
 from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
+from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
 from agents.compliance_schemas import (
@@ -35,6 +45,8 @@ from rag.tools import REGISTRY, execute_tool
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_CALLS = 8
+REVIEW_CONFIDENCE = 0.7
+MAX_CITATION_RETRIES = 1
 MAX_DESCRIPTION_CHARS = 12000
 AGENT_TOOLS = ("SearchLaw", "GetArticle")
 
@@ -52,6 +64,10 @@ class ComplianceState(TypedDict, total=False):
     tool_trace: Annotated[list[dict[str, Any]], operator.add]
     assessment: dict[str, Any]
     assessment_method: str
+    citation_errors: list[str]
+    citation_retries: int
+    next_step: str
+    review: dict[str, Any]
 
 
 PROFILE_PROMPT = (
@@ -84,6 +100,39 @@ ASSESS_PROMPT = """AI 기본법 준수 점검 결과를 작성한다.
 
 제2조제4호 각 목:
 {categories}"""
+
+
+def validate_citations(assessment: ComplianceAssessment, sources: dict[str, dict]) -> list[str]:
+    """Errors for applicable obligations without a valid source id."""
+    errors = []
+    for item in assessment.obligations:
+        if item.applies not in APPLIES:
+            continue
+        unknown = [sid for sid in item.source_ids if sid not in sources]
+        if unknown:
+            errors.append(f"{item.article}: 근거 목록에 없는 id {', '.join(unknown)}")
+        if not [sid for sid in item.source_ids if sid in sources]:
+            errors.append(f"{item.article}: 유효한 근거 id가 없음")
+    return errors
+
+
+def drop_unknown_sources(assessment: ComplianceAssessment, sources: dict[str, dict]) -> ComplianceAssessment:
+    obligations = [
+        item.model_copy(update={"source_ids": [sid for sid in item.source_ids if sid in sources]})
+        for item in assessment.obligations
+    ]
+    return assessment.model_copy(update={"obligations": obligations})
+
+
+def review_reasons(assessment: ComplianceAssessment, citation_errors: list[str]) -> list[str]:
+    reasons = []
+    if assessment.high_impact == "yes":
+        reasons.append("고영향 인공지능 해당")
+    if assessment.confidence < REVIEW_CONFIDENCE:
+        reasons.append(f"신뢰도 {assessment.confidence:.2f} < {REVIEW_CONFIDENCE}")
+    if citation_errors:
+        reasons.append("근거 인용 오류가 남아 있음")
+    return reasons
 
 
 def format_source(source_id: str, document: dict) -> str:
@@ -336,6 +385,12 @@ def build_compliance_graph(
                 obligations="\n".join(f"- {key}: {value}" for key, value in OBLIGATIONS.items()),
                 categories="\n".join(f"- {key}목: {value}" for key, value in HIGH_IMPACT_CATEGORIES.items()),
             )
+            feedback = ""
+            if state.get("citation_errors"):
+                feedback = (
+                    "\n\n이전 결과의 근거 인용 오류. 근거 목록의 id만 쓰고, 근거가 없는 의무는 "
+                    "'판단 정보 부족'으로 바꿔라:\n- " + "\n- ".join(state["citation_errors"])
+                )
             try:
                 result = await structured(ComplianceAssessment).ainvoke(
                     [
@@ -343,7 +398,8 @@ def build_compliance_graph(
                         (
                             "human",
                             f"서비스 설명:\n{state['description']}\n\n"
-                            f"서비스 프로필:\n{_profile_text(state.get('profile') or {})}\n\n근거:\n{evidence}",
+                            f"서비스 프로필:\n{_profile_text(state.get('profile') or {})}\n\n근거:\n{evidence}"
+                            + feedback,
                         ),
                     ]
                 )
@@ -353,6 +409,47 @@ def build_compliance_graph(
                 logger.warning("LLM 판정 실패, 규칙 기반 판정으로 대체: %s", error)
         fallback = rule_based_assessment(profile_model, sources, state.get("description", ""))
         return {"assessment": fallback.model_dump(), "assessment_method": "rule"}
+
+    async def validate(state: ComplianceState) -> dict[str, Any]:
+        sources = state.get("sources") or {}
+        assessment = ComplianceAssessment.model_validate(state["assessment"])
+        errors = validate_citations(assessment, sources)
+        retries = int(state.get("citation_retries", 0))
+        if errors and retries < MAX_CITATION_RETRIES:
+            return {"citation_errors": errors, "citation_retries": retries + 1, "next_step": "retry"}
+        if errors:
+            # 재시도 후에도 남은 오류: 없는 id는 지우고 사람 검토로 넘긴다.
+            assessment = drop_unknown_sources(assessment, sources)
+        next_step = "review" if review_reasons(assessment, errors) else "done"
+        return {"assessment": assessment.model_dump(), "citation_errors": errors, "next_step": next_step}
+
+    def route_validation(state: ComplianceState) -> Literal["retry", "review", "done"]:
+        return state.get("next_step", "done")  # type: ignore[return-value]
+
+    async def human_review(state: ComplianceState) -> dict[str, Any]:
+        assessment = ComplianceAssessment.model_validate(state["assessment"])
+        reasons = review_reasons(assessment, state.get("citation_errors") or [])
+        decision = interrupt(
+            {
+                "reasons": reasons,
+                "high_impact": assessment.high_impact,
+                "high_impact_categories": assessment.high_impact_categories,
+                "confidence": assessment.confidence,
+                "citation_errors": state.get("citation_errors") or [],
+            }
+        )
+        decision = decision if isinstance(decision, dict) else {"approved": bool(decision)}
+        return {
+            "review": {
+                "status": "approved" if decision.get("approved") else "rejected",
+                "reasons": reasons,
+                "reviewer": str(decision.get("reviewer") or "")[:100],
+                "comment": str(decision.get("comment") or "")[:2000],
+            }
+        }
+
+    async def finalize(state: ComplianceState) -> dict[str, Any]:
+        return {"review": {"status": "not_required", "reasons": []}}
 
     builder = StateGraph(ComplianceState)
     builder.add_node("ingest", ingest)
@@ -365,25 +462,81 @@ def build_compliance_graph(
     builder.add_edge("profile", "agent")
     builder.add_conditional_edges("agent", route_agent, {"tools": "tools", "assess": "assess"})
     builder.add_edge("tools", "agent")
-    builder.add_edge("assess", END)
+    builder.add_node("validate", validate)
+    builder.add_node("human_review", human_review)
+    builder.add_node("finalize", finalize)
+    builder.add_edge("assess", "validate")
+    builder.add_conditional_edges(
+        "validate", route_validation, {"retry": "assess", "review": "human_review", "done": "finalize"}
+    )
+    builder.add_edge("human_review", END)
+    builder.add_edge("finalize", END)
     return builder.compile(checkpointer=checkpointer)
 
 
 class ComplianceAgent:
+    """Run the compliance graph and resume it after a human decision.
+
+    Without a checkpointer an in-memory one is used, so approval works inside one
+    process; the API passes the PostgreSQL checkpointer instead.
+    """
+
     def __init__(self, pipeline: Any, llm: Any | None = None, *, checkpointer: Any | None = None):
+        if checkpointer is None:
+            from langgraph.checkpoint.memory import InMemorySaver
+
+            from rag.graph import checkpoint_serde
+
+            checkpointer = InMemorySaver(serde=checkpoint_serde())
         self.graph = build_compliance_graph(pipeline, llm, checkpointer=checkpointer)
 
-    async def assess(self, description: str, *, thread_id: str | None = None) -> dict[str, Any]:
-        config = {"configurable": {"thread_id": thread_id}} if thread_id else None
-        # ReAct 루프(최대 8회 도구 호출 = agent/tools 왕복 16단계)에 여유를 둔다.
-        state = await self.graph.ainvoke(
-            {"description": description},
-            config={**(config or {}), "recursion_limit": 4 * MAX_TOOL_CALLS + 10},
-        )
+    @staticmethod
+    def _config(thread_id: str) -> dict[str, Any]:
+        # ReAct 루프(최대 8회 도구 호출 = agent/tools 왕복)와 재시도에 여유를 둔다.
+        return {"configurable": {"thread_id": thread_id}, "recursion_limit": 4 * MAX_TOOL_CALLS + 20}
+
+    async def start(self, description: str, *, thread_id: str | None = None) -> dict[str, Any]:
+        thread_id = thread_id or f"compliance-{uuid.uuid4()}"
+        await self.graph.ainvoke({"description": description}, config=self._config(thread_id))
+        return await self.result(thread_id)
+
+    async def resume(
+        self, thread_id: str, *, approved: bool, reviewer: str = "", comment: str = ""
+    ) -> dict[str, Any]:
+        current = await self.result(thread_id)
+        if current["status"] != "awaiting_approval":
+            raise ValueError(f"승인 대기 상태가 아닙니다: {current['status']}")
+        decision = {"approved": approved, "reviewer": reviewer, "comment": comment}
+        await self.graph.ainvoke(Command(resume=decision), config=self._config(thread_id))
+        return await self.result(thread_id)
+
+    async def result(self, thread_id: str) -> dict[str, Any]:
+        snapshot = await self.graph.aget_state(self._config(thread_id))
+        state = snapshot.values or {}
+        pending = [item.value for task in snapshot.tasks for item in task.interrupts]
+        if not state:
+            status = "not_found"
+        elif pending:
+            status = "awaiting_approval"
+        elif (state.get("review") or {}).get("status") == "rejected":
+            status = "rejected"
+        elif state.get("review"):
+            status = "completed"
+        else:
+            status = "running"
+        assessment = state.get("assessment")
         return {
-            "assessment": ComplianceAssessment.model_validate(state["assessment"]),
+            "thread_id": thread_id,
+            "status": status,
+            "review_request": pending[0] if pending else None,
+            "review": state.get("review"),
+            "assessment": ComplianceAssessment.model_validate(assessment) if assessment else None,
             "profile": ServiceProfile.model_validate(state.get("profile") or {}),
             "sources": state.get("sources") or {},
             "tool_trace": state.get("tool_trace") or [],
+            "citation_errors": state.get("citation_errors") or [],
             "method": state.get("assessment_method", ""),
         }
+
+    # 평가 스크립트용: 승인 단계와 무관하게 판정 결과만 필요할 때
+    assess = start
