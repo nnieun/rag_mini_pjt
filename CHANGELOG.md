@@ -4,6 +4,12 @@
 
 ### Added
 
+- GitHub Actions CI: backend(ruff + unittest), agent-api(typecheck + vitest), frontend(typecheck + build). (#6, #7, #8)
+- 이슈·PR 템플릿. (#5)
+- 요청 범위 `RequestTrace`, LLM 콜백·도구 호출 수집, `X-Request-ID` 헤더. (#10)
+- `request_runs`/`model_calls`/`tool_calls` PostgreSQL 저장. (#11)
+- LangGraph Postgres 체크포인터로 `thread_id`별 대화 상태 유지. (#12)
+
 - 실제 compiled LangGraph 실행 경로와 검색·재작성·생성·검증·제한된 재시도 노드.
 - LLM Tool Calling 기반 `SearchLaw`, `GetArticle` 선택과 Pydantic 인자 검증.
 - Tool Calling 미지원 엔드포인트를 위한 결정적 라우팅 복구.
@@ -19,6 +25,8 @@
 
 ### Changed
 
+- 도구 선택에서 질문의 "pdf" 키워드가 LLM 선택을 덮어쓰던 동작 제거. 규칙 선택은 LLM이 도구를 고르지 못할 때만 쓴다. (#13)
+
 - 검색 결과를 답변 생성에 재사용해 그래프의 중복 검색을 제거했다.
 - 답변 캐시는 재작성된 질문 대신 원래 사용자 질문을 키로 사용할 수 있다.
 - LangGraph 노드와 조건 함수를 비동기로 통일해 Python 3.14 테스트 종료 지연을 해결했다.
@@ -27,5 +35,5 @@
 
 - 스캔 PDF의 페이지 이미지 OCR 변환은 아직 지원하지 않는다.
 - OCR 실행에는 시스템 Tesseract와 해당 언어 데이터가 필요하다.
-- PostgreSQL 관측 스키마는 추가했지만 애플리케이션의 영속 기록 연결과 비용 계산은 후속 작업이다.
+- 관측 데이터의 비용 계산과 조회 화면은 후속 작업이다(M4).
 - 문서 추출 결과의 영구 저장·색인·삭제 수명주기는 아직 제공하지 않는다.

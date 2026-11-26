@@ -1,5 +1,9 @@
 # AI 기본법 근거 기반 RAG
 
+[![backend](https://github.com/nnieun/rag_mini_pjt/actions/workflows/backend.yml/badge.svg)](https://github.com/nnieun/rag_mini_pjt/actions/workflows/backend.yml)
+[![agent-api](https://github.com/nnieun/rag_mini_pjt/actions/workflows/agent-api.yml/badge.svg)](https://github.com/nnieun/rag_mini_pjt/actions/workflows/agent-api.yml)
+[![frontend](https://github.com/nnieun/rag_mini_pjt/actions/workflows/frontend.yml/badge.svg)](https://github.com/nnieun/rag_mini_pjt/actions/workflows/frontend.yml)
+
 법률을 잘 모르는 사용자도 자연어 질문을 통해 **인공지능 발전과 신뢰 기반 조성 등에 관한 기본법**을 이해할 수 있도록 만드는 근거 기반 QA 프로젝트다.
 
 국가법령정보센터 Open API에서 법령 XML을 수집하고, 법률 구조에 맞게 청킹하여 Qdrant에 저장한다. 이후 Dense Search, BM25, RRF, 조건부 Qwen Reranking으로 근거를 찾고, 검색된 법률 원문만 사용해 답변과 출처를 생성한다. React 프론트엔드는 후속 대화, 질문 기록, 완료 알림, 근거 원문과 목록형 질문의 추가 조문 보기를 제공한다.
@@ -114,14 +118,19 @@ Retrieval 및 Answer 평가
 | 문서 업로드 추출·요약 | 완료 | TXT/XML/텍스트 PDF/PNG/JPEG 추출, LLM 요약 + 토큰 사용량 반환 |
 | 이미지 OCR | 완료 | PNG/JPEG는 Tesseract OCR, 스캔 PDF 페이지 변환은 미지원(422) |
 | PDF 보고서 생성 | 완료 | `CreatePdf` Tool Calling으로 이전 답변·출처를 PDF로 저장, `/reports` 다운로드 |
-| PostgreSQL 전체 ERD/사용량 추적 스키마 | 스키마만 완료 | `users`/`chat_sessions`/`rag_runs`/`request_runs`/`model_calls` 등 테이블은 정의돼 있으나, 애플리케이션이 실제로 `INSERT`하는 테이블은 `answer_cache` 하나뿐 |
-| 자동 테스트 | 완료 | 청킹·검색·Pipeline·API·그래프·문서 처리 테스트 통과 |
+| 요청·모델·도구 호출 기록 | 완료 | 요청마다 `request_runs`/`model_calls`/`tool_calls`에 토큰·지연·오류 저장, 응답 `request_id`·`X-Request-ID`로 조회 |
+| 대화 상태 저장 | 완료 | LangGraph Postgres 체크포인터로 `thread_id`별 이전 턴 유지 |
+| PostgreSQL 전체 ERD | 일부 사용 | 실제 사용: `answer_cache`, `request_runs`, `model_calls`, `tool_calls`, LangGraph 체크포인트 테이블. `users`/`chat_sessions`/`rag_runs` 등은 설계만 존재 ([ERD 문서](docs/POSTGRES_ERD.md) 참고) |
+| 자동 테스트·CI | 완료 | backend unittest, agent-api vitest, frontend 빌드를 GitHub Actions에서 PR마다 실행 |
 | TypeScript Agent API | 완료(별도 서브프로젝트) | `agent-api/` — Claude/OpenAI 공용 Provider, Zod 검증, LLM 판정자-사람 채점 대조, 반복측정 통계 |
 
 ## 3. 프로젝트 구조
 
 ```text
-rag_mini_pjt_template/
+rag_mini_pjt/
+├── .github/
+│   ├── workflows/          # backend, agent-api, frontend CI
+│   └── ISSUE_TEMPLATE/
 ├── backend/
 │   ├── app/
 │   ├── common/
@@ -443,7 +452,7 @@ cd backend
 uv run python -m unittest discover -s tests -v
 ```
 
-현재 20개 테스트가 XML 로딩, 최종 청크 수와 Anchor, 장·절 독립 청크 방지, BM25/RRF/Hybrid 검색, 임베딩 캐시, 부모 확장, 조건부 리랭킹, 목록형 질문 판별, 출처 선택, 순수 Abstention 판정 및 API 스키마를 확인한다. 실제 Qdrant와 LLM을 연결한 `/health`, `/ask` 통합 테스트도 완료했다.
+`backend/tests`의 단위 테스트는 XML 로딩, 최종 청크 수와 Anchor, 장·절 독립 청크 방지, BM25/RRF/Hybrid 검색, 임베딩 캐시, 부모 확장, 조건부 리랭킹, 목록형 질문 판별, 출처 선택, 순수 Abstention 판정, API 스키마, LangGraph 도구 선택, 요청 추적 기록, 대화 체크포인트를 확인한다. LLM·Qdrant·PostgreSQL은 모킹하므로 API 키 없이 실행되며, PR마다 GitHub Actions(`.github/workflows/backend.yml`)에서 같은 명령으로 실행된다. 실제 Qdrant와 LLM을 연결한 `/health`, `/ask` 통합 테스트도 완료했다.
 
 ## 11. 범위 밖 질문
 
@@ -455,7 +464,7 @@ q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 - 기본계획 예산 규모
 - 개발자 자격증 시험 요건
 
-이 문항은 관련 조문 Hit보다 시스템이 근거 부족을 인식하고 답변을 거절하는지를 평가해야 한다. 향후 Retrieval 평가와 별도로 `Abstention Accuracy`를 추가한다.
+이 문항은 관련 조문 Hit보다 시스템이 근거 부족을 인식하고 답변을 거절하는지를 평가해야 한다. 그래서 Retrieval 평가와 별도로 `Abstention Accuracy`를 측정했고, 9절 결과처럼 5문항 모두 올바르게 거절했다(100%).
 
 ## 12. 근거 기반 답변
 
@@ -478,13 +487,13 @@ q41~q45는 법률에서 직접 답할 수 없는 범위 밖 질문이다.
 
 Hallucination은 `있음/없음`으로 별도 기록한다.
 
-현재 수동 평가:
+이 기준으로 q01~q10 10문항을 LLM Judge가 채점했고, 결과는 9절 표(평균 2.0/2.0, Hallucination 0%)와 `backend/eval/results/answer_quality_20261011_015008.csv`에 있다. 사람이 직접 채점한 것은 아래 1문항이며 `backend/eval/answer_evaluation.csv`에 저장했다.
 
 | 질문 | 방법 | 정답성 | 관련성 | 근거 충실성 | Hallucination |
 |---|---|---:|---:|---:|---|
 | 고영향 인공지능이란 무엇인가요? | Hybrid | 2 | 2 | 2 | 없음 |
 
-결과는 `backend/eval/answer_evaluation.csv`에 저장한다. 현재 1문항만 수동 평가했으므로 Answer 품질을 확정하려면 평가 범위를 확대해야 한다.
+LLM Judge 점수를 신뢰하려면 사람 채점과의 일치도가 필요하다. 30문항으로 늘려 사람 2명이 채점하는 작업은 이슈 #38(M4-06)에서 진행한다.
 
 ## 14. 환경 설정
 
