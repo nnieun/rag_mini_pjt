@@ -12,6 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from agents.compliance_graph import ComplianceAgent
+from agents.compliance_runs import (
+    ComplianceService,
+    InMemoryComplianceRunStore,
+    PostgresComplianceRunStore,
+)
+from app.compliance_api import router as compliance_router
 from common.answer_cache import PostgresAnswerCache
 from common.database import create_checkpoint_pool, create_database_pool
 from common.telemetry import RequestTrace, get_current_trace, trace_scope
@@ -132,6 +139,20 @@ async def open_checkpointer():
     return pool, checkpointer
 
 
+async def open_compliance_store():
+    """PostgreSQL compliance_runs 저장소를 열고, 실패하면 메모리 저장소를 쓴다."""
+    if _env_flag("RAG_COMPLIANCE_STORE_ENABLED", True):
+        store = PostgresComplianceRunStore(create_database_pool())
+        try:
+            await store.open()
+        except Exception as error:
+            logger.warning("compliance_runs 테이블을 쓸 수 없어 메모리에 저장합니다: %s", error)
+            await store.close()
+        else:
+            return store
+    return InMemoryComplianceRunStore()
+
+
 def get_pipeline(request: Request) -> RAGPipeline:
     return request.app.state.pipeline
 
@@ -206,6 +227,12 @@ def create_app(
             pipeline, checkpointer=checkpointer, external_tools=external_tools
         )
         app.state.trace_store = trace_store
+        compliance_store = await open_compliance_store()
+        app.state.compliance_service = ComplianceService(
+            ComplianceAgent(pipeline, checkpointer=checkpointer),
+            compliance_store,
+            trace_sink=lambda trace: _schedule_trace_write(app, trace),
+        )
         app.state.pending_trace_writes = set()
         try:
             async with AsyncExitStack() as stack:
@@ -213,6 +240,9 @@ def create_app(
                     await stack.enter_async_context(mcp_server.session_manager.run())
                 yield
         finally:
+            await app.state.compliance_service.close()
+            if isinstance(compliance_store, PostgresComplianceRunStore):
+                await compliance_store.close()
             pending = app.state.pending_trace_writes
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
@@ -239,6 +269,7 @@ def create_app(
             trace_sink=lambda trace: _schedule_trace_write(application, trace),
         )
         application.router.routes.append(mcp_route(mcp_server))
+    application.include_router(compliance_router)
     report_dir = Path(__file__).resolve().parents[1] / "generated_reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     application.mount("/reports", StaticFiles(directory=report_dir), name="reports")

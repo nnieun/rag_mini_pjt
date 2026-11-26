@@ -39,6 +39,7 @@ jobs:
           RAG_RERANK_PRELOAD: "false"
           RAG_CHECKPOINT_ENABLED: "false"
           RAG_TRACE_STORE_ENABLED: "false"
+          RAG_COMPLIANCE_STORE_ENABLED: "false"
         run: uv run python -m unittest discover -s tests -v
 
       - name: MCP server tests
@@ -49,4 +50,5 @@ jobs:
           RAG_RERANK_PRELOAD: "false"
           RAG_CHECKPOINT_ENABLED: "false"
           RAG_TRACE_STORE_ENABLED: "false"
+          RAG_COMPLIANCE_STORE_ENABLED: "false"
         run: uv run python -m unittest tests.test_mcp_server tests.test_mcp_http tests.test_mcp_stdio -v

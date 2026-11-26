@@ -22,7 +22,7 @@ class ApiTest(unittest.TestCase):
     def test_required_routes_exist(self):
         app = create_app(FakePipeline)
         routes = {
-            (route.path, method)
+            (getattr(route, "path", ""), method)
             for route in app.routes
             for method in (getattr(route, "methods", None) or set())
         }
@@ -30,7 +30,7 @@ class ApiTest(unittest.TestCase):
         self.assertIn(("/ask", "POST"), routes)
         self.assertIn(("/documents/extract", "POST"), routes)
         self.assertIn(("/documents/summarize", "POST"), routes)
-        self.assertTrue(any(route.path == "/reports" for route in app.routes))
+        self.assertTrue(any(getattr(route, "path", "") == "/reports" for route in app.routes))
         self.assertIn(("/docs", "GET"), routes)
 
     def test_openapi_ask_schema(self):

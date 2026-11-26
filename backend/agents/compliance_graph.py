@@ -24,6 +24,7 @@ import logging
 import operator
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Literal
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage, ToolMessage
@@ -276,7 +277,7 @@ def build_compliance_graph(
     checkpointer: Any | None = None,
     max_tool_calls: int = MAX_TOOL_CALLS,
 ):
-    llm = llm if llm is not None else pipeline.llm
+    llm = llm if llm is not None else getattr(pipeline, "llm", None)
     tool_models = [REGISTRY[name].args_model for name in AGENT_TOOLS]
 
     async def ingest(state: ComplianceState) -> dict[str, Any]:
@@ -474,6 +475,43 @@ def build_compliance_graph(
     return builder.compile(checkpointer=checkpointer)
 
 
+EventCallback = Callable[[dict[str, Any]], Awaitable[None] | None]
+
+
+def summarize_update(node: str, update: dict[str, Any] | None) -> dict[str, Any]:
+    """Small, JSON-safe progress event for one graph step (no law text, no messages)."""
+    update = update or {}
+    event: dict[str, Any] = {"step": node}
+    if node == "profile":
+        profile = update.get("profile") or {}
+        event["profile"] = {key: profile.get(key) for key in ("name", "domains", "is_generative")}
+    elif node == "agent":
+        messages = update.get("messages") or []
+        calls = getattr(messages[-1], "tool_calls", None) if messages else None
+        event["tool_calls"] = [call.get("name") for call in calls or []]
+    elif node == "tools":
+        event["calls"] = [
+            {"name": item.get("name"), "status": item.get("status")} for item in update.get("tool_trace") or []
+        ]
+        event["tool_call_count"] = update.get("tool_call_count")
+    elif node == "assess":
+        event["method"] = update.get("assessment_method")
+    elif node == "validate":
+        event["citation_errors"] = len(update.get("citation_errors") or [])
+        event["next"] = update.get("next_step")
+    elif node in {"human_review", "finalize"}:
+        event["review"] = (update.get("review") or {}).get("status")
+    return event
+
+
+async def _emit(callback: EventCallback | None, event: dict[str, Any]) -> None:
+    if callback is None:
+        return
+    pending = callback(event)
+    if pending is not None:
+        await pending
+
+
 class ComplianceAgent:
     """Run the compliance graph and resume it after a human decision.
 
@@ -495,19 +533,41 @@ class ComplianceAgent:
         # ReAct 루프(최대 8회 도구 호출 = agent/tools 왕복)와 재시도에 여유를 둔다.
         return {"configurable": {"thread_id": thread_id}, "recursion_limit": 4 * MAX_TOOL_CALLS + 20}
 
-    async def start(self, description: str, *, thread_id: str | None = None) -> dict[str, Any]:
+    async def _drive(self, graph_input: Any, thread_id: str, on_event: EventCallback | None) -> None:
+        async for chunk in self.graph.astream(
+            graph_input, config=self._config(thread_id), stream_mode="updates"
+        ):
+            for node, update in chunk.items():
+                if node == "__interrupt__":
+                    await _emit(on_event, {"step": "awaiting_approval"})
+                else:
+                    await _emit(on_event, summarize_update(node, update))
+
+    async def start(
+        self,
+        description: str,
+        *,
+        thread_id: str | None = None,
+        on_event: EventCallback | None = None,
+    ) -> dict[str, Any]:
         thread_id = thread_id or f"compliance-{uuid.uuid4()}"
-        await self.graph.ainvoke({"description": description}, config=self._config(thread_id))
+        await self._drive({"description": description}, thread_id, on_event)
         return await self.result(thread_id)
 
     async def resume(
-        self, thread_id: str, *, approved: bool, reviewer: str = "", comment: str = ""
+        self,
+        thread_id: str,
+        *,
+        approved: bool,
+        reviewer: str = "",
+        comment: str = "",
+        on_event: EventCallback | None = None,
     ) -> dict[str, Any]:
         current = await self.result(thread_id)
         if current["status"] != "awaiting_approval":
             raise ValueError(f"승인 대기 상태가 아닙니다: {current['status']}")
         decision = {"approved": approved, "reviewer": reviewer, "comment": comment}
-        await self.graph.ainvoke(Command(resume=decision), config=self._config(thread_id))
+        await self._drive(Command(resume=decision), thread_id, on_event)
         return await self.result(thread_id)
 
     async def result(self, thread_id: str) -> dict[str, Any]:
