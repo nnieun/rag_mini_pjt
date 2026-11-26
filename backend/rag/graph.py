@@ -105,6 +105,54 @@ def grade_answer(answer: str, source_count: int) -> bool:
     return source_count > 0 and bool(re.search(r"\[S\d+\]", answer))
 
 
+ROUTABLE_TOOLS = {"SearchLaw", "GetArticle", "CreatePdf"}
+PDF_TERMS = ("pdf", "피디에프")
+TOOL_ROUTING_PROMPT = (
+    "AI 기본법 질문에 필요한 도구 하나를 선택하세요. "
+    "특정 조문 번호가 있으면 GetArticle을 사용하세요. "
+    "이전 답변을 PDF로 만들어 달라는 요청은 CreatePdf를 사용하세요."
+)
+
+
+def select_tool_by_rule(
+    question: str,
+    search_question: str,
+    rewritten_question: str,
+    analysis: RequestAnalysis,
+) -> tuple[str, dict[str, Any]]:
+    """Deterministic routing used when the LLM cannot or does not pick a tool."""
+    if any(term in question.lower() for term in PDF_TERMS):
+        return "CreatePdf", {"title": "AI 기본법 답변 보고서", "include_sources": True}
+    if analysis.article_number:
+        return "GetArticle", {"article_number": analysis.article_number}
+    return "SearchLaw", {
+        "query": rewritten_question,
+        "top_k": 20 if is_list_query(search_question) else 5,
+    }
+
+
+async def select_tool_by_llm(
+    llm: Any, question: str
+) -> tuple[str, dict[str, Any]] | None:
+    """Ask the LLM to pick a tool. Returns None so the caller keeps the rule choice."""
+    bind_tools = getattr(llm, "bind_tools", None)
+    if not callable(bind_tools):
+        return None
+    try:
+        response = await bind_tools([SearchLaw, GetArticle, CreatePdf]).ainvoke(
+            [("system", TOOL_ROUTING_PROMPT), ("human", question)]
+        )
+    except Exception:
+        return None
+    calls = getattr(response, "tool_calls", None) or []
+    if not calls:
+        return None
+    name = str(calls[0].get("name", ""))
+    if name not in ROUTABLE_TOOLS:
+        return None
+    return name, dict(calls[0].get("args") or {})
+
+
 def build_rag_graph(pipeline: RAGPipeline):
     async def resolve_follow_up(state: RAGGraphState) -> dict[str, Any]:
         history = state.get("history", [])[-3:]
@@ -180,48 +228,27 @@ def build_rag_graph(pipeline: RAGPipeline):
                     }
                 except Exception:
                     pass
-        tool_name = "GetArticle" if analysis.article_number else "SearchLaw"
-        arguments: dict[str, Any] = (
-            {"article_number": analysis.article_number}
-            if analysis.article_number
-            else {
-                "query": base["rewritten_question"],
-                "top_k": 20 if is_list_query(search_question) else 5,
-            }
+        # 1) 규칙으로 기본 도구를 정하고 2) LLM이 고르면 그 선택을 따른다.
+        tool_name, arguments = select_tool_by_rule(
+            state["question"], search_question, base["rewritten_question"], analysis
         )
-        if any(term in state["question"].lower() for term in ("pdf", "피디에프")):
-            tool_name = "CreatePdf"
-            arguments = {"title": "AI 기본법 답변 보고서", "include_sources": True}
 
         if os.getenv("RAG_LLM_TOOL_ROUTING_ENABLED", "true").lower() in {
             "1", "true", "yes", "on"
         }:
-            bind_tools = getattr(pipeline.llm, "bind_tools", None)
-            if callable(bind_tools):
-                try:
-                    response = await bind_tools([SearchLaw, GetArticle, CreatePdf]).ainvoke(
-                        [
-                            (
-                                "system",
-                                "AI 기본법 질문에 필요한 도구 하나를 선택하세요. "
-                                "특정 조문 번호가 있으면 GetArticle을 사용하세요. "
-                                "이전 답변을 PDF로 만들어 달라는 요청은 CreatePdf를 사용하세요.",
-                            ),
-                            ("human", search_question),
-                        ]
-                    )
-                    calls = getattr(response, "tool_calls", [])
-                    if calls:
-                        tool_name = str(calls[0]["name"])
-                        arguments = dict(calls[0]["args"])
-                except Exception:
-                    pass
+            # 후속 질문 재작성 과정에서 "PDF로 만들어줘" 같은 요청 의도가 빠지지 않도록
+            # 원래 요청과 검색용 질의를 함께 준다.
+            routing_input = (
+                f"현재 요청: {state['question']}\n검색용 질의: {search_question}"
+                if search_question != state["question"]
+                else search_question
+            )
+            selected = await select_tool_by_llm(pipeline.llm, routing_input)
+            if selected is not None:
+                tool_name, arguments = selected
 
-        if any(term in state["question"].lower() for term in ("pdf", "피디에프")):
-            tool_name = "CreatePdf"
-            arguments = {"title": "AI 기본법 답변 보고서", "include_sources": True}
         if tool_name == "SearchLaw":
-            arguments["query"] = base["rewritten_question"]
+            arguments = {**arguments, "query": base["rewritten_question"]}
         return {**base, "tool_name": tool_name, "tool_arguments": arguments}
 
     async def run_tool(state: RAGGraphState) -> dict[str, Any]:
