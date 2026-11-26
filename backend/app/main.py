@@ -19,6 +19,7 @@ from common.trace_store import PostgresTraceStore, save_trace_safely
 from documents.processor import extract_document
 from mcp_server.http import build_http_server, mcp_route
 from rag.graph import LangGraphRAG, checkpoint_serde
+from rag.mcp_client import load_external_tools
 from rag.pipeline import RAGPipeline
 from rag.retry import retry_rate_limit
 from rag.schemas import ConversationHistoryItem
@@ -195,7 +196,15 @@ def create_app(
                 await trace_store.close()
                 trace_store = None
         app.state.pipeline = pipeline
-        app.state.rag_graph = LangGraphRAG(pipeline, checkpointer=checkpointer)
+        external_tools = []
+        if _env_flag("RAG_MCP_CLIENT_ENABLED", True):
+            try:
+                external_tools = await load_external_tools()
+            except Exception as error:  # 설정 파일 오류 등
+                logger.warning("외부 MCP 서버 설정을 읽지 못해 외부 도구 없이 시작합니다: %s", error)
+        app.state.rag_graph = LangGraphRAG(
+            pipeline, checkpointer=checkpointer, external_tools=external_tools
+        )
         app.state.trace_store = trace_store
         app.state.pending_trace_writes = set()
         try:

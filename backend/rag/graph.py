@@ -4,11 +4,13 @@ import asyncio
 import operator
 import os
 import re
+from collections.abc import Sequence
 from typing import Annotated, Any, Literal
 
 from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
+from rag.mcp_client import run_external_tool
 from rag.models import AnswerResult
 from rag.pipeline import RAGPipeline, is_list_query
 from rag.retriever import is_definition_query
@@ -36,6 +38,8 @@ class RAGGraphState(TypedDict, total=False):
     answer_result: AnswerResult
     validation_errors: list[str]
     artifact_url: str
+    # 외부 MCP 서버 도구(langchain-mcp-adapters)의 출력
+    external_output: str
     # 체크포인터가 있으면 thread_id별로 대화 턴이 누적된다(append reducer).
     turns: Annotated[list[dict[str, Any]], operator.add]
 
@@ -67,6 +71,7 @@ TURN_RESET: dict[str, Any] = {
     "answer_retries": 0,
     "validation_errors": [],
     "artifact_url": "",
+    "external_output": "",
 }
 
 
@@ -141,7 +146,8 @@ PDF_TERMS = ("pdf", "피디에프")
 TOOL_ROUTING_PROMPT = (
     "AI 기본법 질문에 필요한 도구 하나를 선택하세요. "
     "특정 조문 번호가 있으면 GetArticle을 사용하세요. "
-    "이전 답변을 PDF로 만들어 달라는 요청은 CreatePdf를 사용하세요."
+    "이전 답변을 PDF로 만들어 달라는 요청은 CreatePdf를 사용하세요. "
+    "법령이 아닌 파일·외부 시스템에 대한 요청이면 그 작업에 맞는 외부 도구를 사용하세요."
 )
 
 
@@ -168,15 +174,21 @@ def select_tool_by_rule(
 
 
 async def select_tool_by_llm(
-    llm: Any, question: str
+    llm: Any, question: str, external_tools: Sequence[Any] = ()
 ) -> tuple[str, dict[str, Any]] | None:
-    """Ask the LLM to pick a tool. Returns None so the caller keeps the rule choice."""
+    """Ask the LLM to pick a tool. Returns None so the caller keeps the rule choice.
+
+    `external_tools` are LangChain tools from external MCP servers; they are offered
+    next to the built-in tools.
+    """
     bind_tools = getattr(llm, "bind_tools", None)
     specs = allowed_specs()
-    if not callable(bind_tools) or not specs:
+    if not callable(bind_tools) or not (specs or external_tools):
         return None
     try:
-        response = await bind_tools([spec.args_model for spec in specs]).ainvoke(
+        response = await bind_tools(
+            [spec.args_model for spec in specs] + list(external_tools)
+        ).ainvoke(
             [("system", TOOL_ROUTING_PROMPT), ("human", question)]
         )
     except Exception:
@@ -185,12 +197,18 @@ async def select_tool_by_llm(
     if not calls:
         return None
     name = str(calls[0].get("name", ""))
-    if name not in {spec.name for spec in specs}:
+    if name not in {spec.name for spec in specs} | {tool.name for tool in external_tools}:
         return None
     return name, dict(calls[0].get("args") or {})
 
 
-def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
+def build_rag_graph(
+    pipeline: RAGPipeline,
+    checkpointer: Any | None = None,
+    external_tools: Sequence[Any] = (),
+):
+    external_by_name = {tool.name: tool for tool in external_tools}
+
     async def resolve_follow_up(state: RAGGraphState) -> dict[str, Any]:
         # 클라이언트가 보낸 history가 우선이고, 없으면 체크포인트에 남은 이전 턴을 쓴다.
         history = (state.get("history") or state.get("turns") or [])[-MAX_REMEMBERED_TURNS:]
@@ -281,7 +299,9 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
                 if search_question != state["question"]
                 else search_question
             )
-            selected = await select_tool_by_llm(pipeline.llm, routing_input)
+            selected = await select_tool_by_llm(
+                pipeline.llm, routing_input, list(external_by_name.values())
+            )
             if selected is not None:
                 tool_name, arguments = selected
 
@@ -290,6 +310,13 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
         return {**base, "tool_name": tool_name, "tool_arguments": arguments}
 
     async def run_tool(state: RAGGraphState) -> dict[str, Any]:
+        external = external_by_name.get(state["tool_name"])
+        if external is not None:
+            try:
+                output = await run_external_tool(external, state["tool_arguments"])
+            except Exception as error:
+                output = f"외부 도구 {external.name} 실행에 실패했습니다: {type(error).__name__}"
+            return {"external_output": output, "documents": [], "relevance": 1.0}
         result = await execute_tool(
             pipeline,
             state["tool_name"],
@@ -304,9 +331,11 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
 
     async def route_documents(
         state: RAGGraphState,
-    ) -> Literal["artifact", "rewrite", "generate"]:
+    ) -> Literal["artifact", "external", "rewrite", "generate"]:
         if state.get("artifact_url"):
             return "artifact"
+        if state.get("external_output"):
+            return "external"
         retries = int(state.get("retrieval_retries", 0))
         if (not state.get("documents") or state.get("relevance", 0.0) < 0.10) and retries < 1:
             return "rewrite"
@@ -319,6 +348,18 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
                 answer=f"PDF 보고서를 생성했습니다: {url}",
                 sources=[],
                 method="ToolCalling(CreatePdf)",
+                retrieved_articles=[],
+                resolved_question=state.get("standalone_question") or state["question"],
+            )
+        }
+
+    async def external_response(state: RAGGraphState) -> dict[str, Any]:
+        # 외부 도구 결과는 법령 근거 답변이 아니므로 출처 검증 없이 그대로 돌려준다.
+        return {
+            "answer_result": AnswerResult(
+                answer=state["external_output"],
+                sources=[],
+                method=f"ToolCalling(MCP:{state['tool_name']})",
                 retrieved_articles=[],
                 resolved_question=state.get("standalone_question") or state["question"],
             )
@@ -382,6 +423,7 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
     builder.add_node("analyze_and_select_tool", analyze)
     builder.add_node("execute_tool", run_tool)
     builder.add_node("artifact_response", artifact_response)
+    builder.add_node("external_response", external_response)
     builder.add_node("rewrite_query", rewrite)
     builder.add_node("generate", generate)
     builder.add_node("validate", validate)
@@ -395,11 +437,13 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
         route_documents,
         {
             "artifact": "artifact_response",
+            "external": "external_response",
             "rewrite": "rewrite_query",
             "generate": "generate",
         },
     )
     builder.add_edge("artifact_response", END)
+    builder.add_edge("external_response", END)
     builder.add_edge("remember", END)
     builder.add_edge("rewrite_query", "execute_tool")
     builder.add_edge("generate", "validate")
@@ -411,13 +455,20 @@ def build_rag_graph(pipeline: RAGPipeline, checkpointer: Any | None = None):
 
 
 class LangGraphRAG:
-    def __init__(self, pipeline: RAGPipeline, checkpointer: Any | None = None):
+    def __init__(
+        self,
+        pipeline: RAGPipeline,
+        checkpointer: Any | None = None,
+        external_tools: Sequence[Any] = (),
+    ):
         self.pipeline = pipeline
-        self.graph = build_rag_graph(pipeline)
+        self.external_tools = list(external_tools)
+        self.graph = build_rag_graph(pipeline, external_tools=self.external_tools)
         # thread_id가 있는 요청만 체크포인터 그래프를 쓴다. 없는 요청까지 저장하면
         # 일회성 thread가 체크포인트 테이블에 쌓인다.
         self.memory_graph = (
-            build_rag_graph(pipeline, checkpointer) if checkpointer is not None else None
+            build_rag_graph(pipeline, checkpointer, self.external_tools)
+            if checkpointer is not None else None
         )
         self.timeout_seconds = float(os.getenv("RAG_GRAPH_TIMEOUT_SECONDS", "120"))
 
